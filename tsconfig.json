@@ -9,6 +9,8 @@
     "target": "esnext",
     "lib": ["esnext"],
     "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
 
     // Other Outputs
     "sourceMap": true,
