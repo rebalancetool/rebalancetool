@@ -1,0 +1,22 @@
+{
+  "name": "@rebalancer/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin CLI wrapper around @rebalancer/solver.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "solve": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests in @rebalancer/cli'",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@rebalancer/solver": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.19.2",
+    "typescript": "^7.0.2"
+  }
+}

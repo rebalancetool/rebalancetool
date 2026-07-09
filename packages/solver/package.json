@@ -1,0 +1,25 @@
+{
+  "name": "@rebalancer/solver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure, deterministic buy-only portfolio rebalancing engine. No I/O.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "fast-check": "^4.4.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
