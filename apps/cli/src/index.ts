@@ -18,8 +18,9 @@ override what the file says:
                                               (implies --sell)
       --tolerance-bps <n>                     tolerance band in basis points
       --min-trade-cents <n>                   minimum sell-funded trade size
-      --optimizer <greedy|lp>                 allocation engine (default greedy;
-                                              lp = provably optimal linear program)
+      --optimizer <greedy|lp>                 allocation engine (default lp, a provably
+                                              optimal linear program; greedy = the
+                                              original waterfall)
   -h, --help                                  show this help
 
 Examples:

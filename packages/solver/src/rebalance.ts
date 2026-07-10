@@ -97,14 +97,8 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   const allowSelling = options.allowSelling ?? false;
   const sellInTaxableAccounts = options.sellInTaxableAccounts ?? false;
   const toleranceBps = options.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
-  const optimizer = options.optimizer ?? "greedy";
-  let minTradeCents = options.minTradeCents ?? 0;
-
-  const optionWarnings: string[] = [];
-  if (optimizer === "lp" && minTradeCents > 0) {
-    optionWarnings.push('minTradeCents is not supported by the "lp" optimizer and was ignored.');
-    minTradeCents = 0;
-  }
+  const optimizer = options.optimizer ?? "lp";
+  const minTradeCents = options.minTradeCents ?? 0;
 
   // --- Step 1: current holdings per account, by asset class and by fund ---
   const currentByAccount = new Map<string, Map<string, number>>();
@@ -258,7 +252,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   // allocation data already shows every shortfall — so only structural
   // problems are reported: no account offers the class at all, the accounts
   // that do got no cash, or selling was enabled but blocked.
-  const warnings: string[] = [...optionWarnings];
+  const warnings: string[] = [];
   for (const w of allocation.warnings) {
     switch (w.kind) {
       case "unreachable_gap": {
