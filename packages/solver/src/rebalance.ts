@@ -1,4 +1,5 @@
 import { allocate } from "./allocate.ts";
+import { allocateLp } from "./allocate.lp.ts";
 import type { TransportationProblem } from "./allocate.ts";
 import { DEFAULT_TOLERANCE_BPS } from "./types.ts";
 import type {
@@ -96,6 +97,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   const allowSelling = options.allowSelling ?? false;
   const sellInTaxableAccounts = options.sellInTaxableAccounts ?? false;
   const toleranceBps = options.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
+  const optimizer = options.optimizer ?? "lp";
   const minTradeCents = options.minTradeCents ?? 0;
 
   // --- Step 1: current holdings per account, by asset class and by fund ---
@@ -163,7 +165,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     minTradeCents,
   };
 
-  const allocation = allocate(problem);
+  const allocation = optimizer === "lp" ? allocateLp(problem) : allocate(problem);
 
   // --- translate allocation deltas (x[a][c] - H[a][c]) into trades ---
   const leftoverByAccount = new Map<string, { assetClassId: string; amount: number }>();
@@ -492,5 +494,8 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     if (!Number.isInteger(options.minTradeCents) || options.minTradeCents < 0) {
       throw new Error(`minTradeCents must be a non-negative integer number of cents, got ${options.minTradeCents}.`);
     }
+  }
+  if (options.optimizer !== undefined && options.optimizer !== "greedy" && options.optimizer !== "lp") {
+    throw new Error(`optimizer must be "greedy" or "lp", got ${JSON.stringify(options.optimizer)}.`);
   }
 }

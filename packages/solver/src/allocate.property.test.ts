@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { allocate } from "./allocate.ts";
+import { allocateLp } from "./allocate.lp.ts";
 import type { TransportationProblem } from "./allocate.ts";
 
 /**
@@ -40,8 +41,15 @@ function threeWaySplit(total: number, cutSeedA: number, cutSeedB: number): numbe
   return [lo, hi - lo, total - hi];
 }
 
-describe("allocate - brute-force optimality (fast-check)", () => {
-  it("single account: greedy reaches the brute-force minimum deviation under any buy/sell constraints", () => {
+// roundingSlack: the LP's float→integer repair conserves account totals
+// exactly but can shift a class total by strictly less than one cent per
+// account, so its integer deviation may exceed the true optimum by up to
+// (#classes × #accounts − 1) cents. Greedy works in integers throughout.
+describe.each([
+  ["greedy", allocate, 0],
+  ["lp", allocateLp, 1],
+] as const)("allocate (%s) - brute-force optimality (fast-check)", (_name, allocateImpl, roundingSlack) => {
+  it("single account: reaches the brute-force minimum deviation under any buy/sell constraints", () => {
     fc.assert(
       fc.property(
         fc.array(fc.nat({ max: 6 }), { minLength: 3, maxLength: 3 }),
@@ -78,7 +86,7 @@ describe("allocate - brute-force optimality (fast-check)", () => {
             minTradeCents: 0,
           };
 
-          const greedyDeviation = deviationOf(allocate(problem).x, demands);
+          const achievedDeviation = deviationOf(allocateImpl(problem).x, demands);
 
           // Brute force every composition of `total` into the three classes.
           let best = Number.POSITIVE_INFINITY;
@@ -97,13 +105,14 @@ describe("allocate - brute-force optimality (fast-check)", () => {
             }
           }
 
-          expect(greedyDeviation).toBe(best);
+          expect(achievedDeviation).toBeGreaterThanOrEqual(best);
+          expect(achievedDeviation).toBeLessThanOrEqual(best + roundingSlack * CLASS_IDS.length);
         },
       ),
     );
   });
 
-  it("two unconstrained accounts: greedy always reaches the target exactly", () => {
+  it("two unconstrained accounts: always reaches the target exactly", () => {
     fc.assert(
       fc.property(
         fc.array(fc.nat({ max: 4 }), { minLength: 6, maxLength: 6 }),
@@ -135,8 +144,82 @@ describe("allocate - brute-force optimality (fast-check)", () => {
             minTradeCents: 0,
           };
 
+          const achievedDeviation = deviationOf(allocateImpl(problem).x, demands);
+          expect(achievedDeviation).toBeLessThanOrEqual(roundingSlack * 2 * CLASS_IDS.length);
+        },
+      ),
+    );
+  });
+});
+
+describe("allocate - lp vs greedy (fast-check)", () => {
+  // On constrained multi-account problems the greedy can be marginally
+  // suboptimal (cross-account contention); the LP never may be. It must
+  // match or beat greedy everywhere while honoring the same constraints.
+  it("lp deviation is never worse than greedy's, and lp never sells a class below demand", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.nat({ max: 5 }), { minLength: 6, maxLength: 6 }),
+        fc.array(fc.nat({ max: 3 }), { minLength: 2, maxLength: 2 }),
+        fc.array(fc.boolean(), { minLength: 6, maxLength: 6 }),
+        fc.array(fc.boolean(), { minLength: 6, maxLength: 6 }),
+        fc.nat({ max: 1000 }),
+        fc.nat({ max: 1000 }),
+        (flatHoldings, cashes, buyableFlags, sellableFlags, cutSeedA, cutSeedB) => {
+          // Each account needs somewhere for its cash, or rebalance() would
+          // have rejected the input before allocate() ever ran.
+          if (cashes[0]! > 0 && !buyableFlags.slice(0, 3).some(Boolean)) buyableFlags[0] = true;
+          if (cashes[1]! > 0 && !buyableFlags.slice(3).some(Boolean)) buyableFlags[3] = true;
+
+          const total = flatHoldings.reduce((s, v) => s + v, 0) + cashes.reduce((s, v) => s + v, 0);
+          const demands = threeWaySplit(total, cutSeedA, cutSeedB);
+          const accountIds = ["acct_a", "acct_b"];
+          const flagIndex = (accountId: string, assetClassId: string): number =>
+            (accountId === "acct_a" ? 0 : 3) + CLASS_IDS.indexOf(assetClassId as never);
+
+          const problem: TransportationProblem = {
+            accounts: [
+              { id: "acct_a", taxType: "taxable", fallbackAssetClassId: CLASS_IDS[buyableFlags.slice(0, 3).findIndex(Boolean)] },
+              { id: "acct_b", taxType: "tax_free", fallbackAssetClassId: CLASS_IDS[buyableFlags.slice(3).findIndex(Boolean)] },
+            ],
+            assetClasses: CLASS_IDS.map((id) => ({ id, taxPreference: "neutral" })),
+            cash: new Map([
+              ["acct_a", cashes[0]!],
+              ["acct_b", cashes[1]!],
+            ]),
+            demands: new Map(CLASS_IDS.map((id, i) => [id, demands[i]!])),
+            current: new Map(
+              accountIds.map((accountId, a) => [
+                accountId,
+                new Map(CLASS_IDS.map((id, i) => [id, flatHoldings[a * 3 + i]!])),
+              ]),
+            ),
+            buyable: (accountId, assetClassId) => buyableFlags[flagIndex(accountId, assetClassId)]!,
+            sellable: (accountId, assetClassId) =>
+              sellableFlags[flagIndex(accountId, assetClassId)]! ? Number.MAX_SAFE_INTEGER : 0,
+            toleranceCents: 0,
+            minTradeCents: 0,
+          };
+
+          // Rounding can cost the LP strictly less than one cent per
+          // account per class; beyond that it must match or beat greedy.
+          const roundingSlack = accountIds.length * CLASS_IDS.length;
           const greedyDeviation = deviationOf(allocate(problem).x, demands);
-          expect(greedyDeviation).toBe(0);
+          const lp = allocateLp(problem);
+          const lpDeviation = deviationOf(lp.x, demands);
+          expect(lpDeviation).toBeLessThanOrEqual(greedyDeviation + roundingSlack);
+
+          // Never-sell-below-demand: a class's total only drops toward,
+          // never past, its demand (again modulo per-account rounding).
+          CLASS_IDS.forEach((classId, i) => {
+            let currentTotal = 0;
+            let finalTotal = 0;
+            for (const accountId of accountIds) {
+              currentTotal += flatHoldings[flagIndex(accountId, classId)]!;
+              finalTotal += lp.x.get(accountId)!.get(classId) ?? 0;
+            }
+            expect(finalTotal).toBeGreaterThanOrEqual(Math.min(currentTotal, demands[i]!) - accountIds.length);
+          });
         },
       ),
     );

@@ -256,12 +256,12 @@ export function allocate(problem: TransportationProblem): Allocation {
 }
 
 /** Lower rank = more preferred account for this asset class's tax preference. */
-function taxTypeRank(preference: TaxPreference, taxType: TaxType): number {
+export function taxTypeRank(preference: TaxPreference, taxType: TaxType): number {
   if (preference === "neutral") return 0;
   if (preference === "prefer_tax_advantaged") return isTaxAdvantaged(taxType) ? 0 : 1;
   return taxType === "taxable" ? 0 : 1; // prefer_taxable
 }
 
-function isTaxAdvantaged(taxType: TaxType): boolean {
+export function isTaxAdvantaged(taxType: TaxType): boolean {
   return taxType === "tax_deferred" || taxType === "tax_free";
 }

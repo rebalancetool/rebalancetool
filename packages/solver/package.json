@@ -21,5 +21,8 @@
     "fast-check": "^4.4.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "yalps": "^0.6.4"
   }
 }

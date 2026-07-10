@@ -116,11 +116,22 @@ export interface RebalanceOptions {
   toleranceBps?: number;
   /**
    * Minimum size, in integer cents, of a sell-funded rebalancing move
-   * (default 0 = no minimum). Applies to the sell pass only: contribution
-   * cash is always fully invested, however small, because cash may not sit
-   * idle in an account.
+   * (default 0 = no minimum). Applies to selling only: contribution cash is
+   * always fully invested, however small, because cash may not sit idle in
+   * an account. A sell either clears this floor or doesn't happen.
    */
   minTradeCents?: number;
+  /**
+   * Which allocation engine to use (default "lp"). "lp" solves the
+   * placement as a linear program: provably minimal deviation, then minimal
+   * selling, then minimal taxable selling, then tax-preferred placement —
+   * and, unlike "greedy", can relocate a class between accounts when
+   * restricted fund menus require it. "greedy" is the original two-pass
+   * waterfall: dependency-free, integer arithmetic throughout, and stable
+   * hand-specified tie-breaks. Both satisfy the same invariants;
+   * equally-optimal placements may differ between them.
+   */
+  optimizer?: "greedy" | "lp";
 }
 
 /**

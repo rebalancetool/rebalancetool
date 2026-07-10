@@ -29,6 +29,10 @@ importers:
         version: 7.0.2
 
   packages/solver:
+    dependencies:
+      yalps:
+        specifier: ^0.6.4
+        version: 0.6.4
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
@@ -535,6 +539,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  heap@0.2.7:
+    resolution: {integrity: sha512-2bsegYkkHO+h/9MGbn6KWcE45cHZgPANo5LXF7EvWdT0yT2EguSVO1nDgU5c8+ZOPwp2vMNa7YFsJhVcDR9Sdg==}
+
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
     engines: {node: '>= 12.0.0'}
@@ -775,6 +782,9 @@ packages:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
     engines: {node: '>=8'}
     hasBin: true
+
+  yalps@0.6.4:
+    resolution: {integrity: sha512-PfOgB86E32G89K4IPiKZDCd9is2tQCSV89/t5HWdbAzbVPAL8vJ8es6Z1Ox6oN8d1k2mM/dqIQJDoaooFxIc+w==}
 
 snapshots:
 
@@ -1111,6 +1121,8 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
+  heap@0.2.7: {}
+
   lightningcss-android-arm64@1.32.0:
     optional: true
 
@@ -1300,3 +1312,7 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  yalps@0.6.4:
+    dependencies:
+      heap: 0.2.7

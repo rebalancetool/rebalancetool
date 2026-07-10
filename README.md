@@ -37,12 +37,26 @@ shape a future UI would save/load):
   - `toleranceBps` (default `50`) — the tolerance band: an asset class
     within ±0.5% of its target weight is treated as on-target, so trivial
     drift never triggers trades. `0` = rebalance exactly.
-  - `minTradeCents` (default `0`) — floor on individual sell-funded moves.
-    (Contribution cash is always fully invested, however small — cash may
-    not sit idle in an account.)
+  - `minTradeCents` (default `0`) — floor on individual sell-funded moves:
+    a sell either clears the floor or doesn't happen. (Contribution cash is
+    always fully invested, however small — cash may not sit idle in an
+    account.)
+  - `optimizer` (default `"lp"`) — the allocation engine. `"lp"` solves the
+    placement as a linear program ([YALPS](https://github.com/Ivordir/YALPS)):
+    provably minimal deviation, then minimal selling, then minimal *taxable*
+    selling, then tax-preferred placement — and it can *relocate* a class
+    between accounts when restricted fund menus require it (e.g. sell bonds
+    in the IRA to finish funding international there, while the 401(k) buys
+    the bonds back). `"greedy"` is the original two-pass waterfall:
+    dependency-free and integer-exact, but it only ever sells
+    globally-overweight classes, so it can leave a residual gap on exactly
+    those restricted-menu portfolios. Both honor the same invariants.
 
-**Algorithm** (greedy waterfall in two passes — full detail in the comment
-block atop `packages/solver/src/rebalance.ts`):
+**Algorithm.** The default `"lp"` engine solves the placement directly as a
+linear program (see the comment atop `packages/solver/src/allocate.lp.ts`).
+The `"greedy"` engine is a waterfall in two passes — full detail in the
+comment block atop `packages/solver/src/rebalance.ts`; the shared framing
+(steps 1 and 4 apply to both engines):
 
 1. Sum current holdings by asset class across all accounts, and compute each
    asset class's target dollar value at the post-contribution total. Gaps or
@@ -75,10 +89,10 @@ what should make it safe to drop straight behind a web UI later — the solver
 has no notion of a request/response cycle to adapt.
 
 Internally, `rebalance()` reduces its input to a fixed-supply transportation
-problem and delegates placement to `allocate()`
-(`packages/solver/src/allocate.ts`) — a deliberate seam so the greedy
-implementation can later be swapped for an LP-backed one without touching
-callers, the scenario format, or the tests.
+problem and delegates placement behind a deliberate seam: the LP in
+`packages/solver/src/allocate.lp.ts` by default, or the greedy waterfall in
+`allocate.ts` with `optimizer: "greedy"`. A brute-force reference in the
+property tests holds both implementations to the same optimality bar.
 
 ## Project layout
 
@@ -136,6 +150,7 @@ override the file:
     --sell-taxable                          also allow sells in taxable accounts (implies --sell)
     --tolerance-bps <n>                     tolerance band in basis points
     --min-trade-cents <n>                   minimum sell-funded trade size
+    --optimizer <greedy|lp>                 allocation engine (default lp)
 ```
 
 Try it against the placeholder fixtures:
