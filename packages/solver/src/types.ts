@@ -83,6 +83,13 @@ export interface Portfolio {
 }
 
 /**
+ * 100% expressed in basis points. Target weights must sum to exactly this,
+ * and every bps-denominated quantity (weights, tolerance bands, deviations)
+ * lives on the 0..TOTAL_BPS scale.
+ */
+export const TOTAL_BPS = 10000;
+
+/**
  * Default tolerance band: an asset class within ±0.5% of its target weight
  * is treated as on-target, so ordinary drift is absorbed by contributions
  * instead of triggering trades. Pass toleranceBps: 0 for exact rebalancing.

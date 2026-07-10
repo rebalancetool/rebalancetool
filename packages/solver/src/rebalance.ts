@@ -1,7 +1,7 @@
 import { allocate } from "./allocate.ts";
 import { allocateLp } from "./allocate.lp.ts";
 import type { TransportationProblem } from "./allocate.ts";
-import { DEFAULT_TOLERANCE_BPS } from "./types.ts";
+import { DEFAULT_TOLERANCE_BPS, TOTAL_BPS } from "./types.ts";
 import type {
   Account,
   AllocationEntry,
@@ -161,7 +161,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       return currentByAccount.get(accountId)!.get(assetClassId) ?? 0;
     },
     // ±toleranceBps of target weight, expressed in dollars of the new total.
-    toleranceCents: Math.floor((newTotal * toleranceBps) / 10000),
+    toleranceCents: Math.floor((newTotal * toleranceBps) / TOTAL_BPS),
     minTradeCents,
   };
 
@@ -336,7 +336,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   }
 
   const resultingWeightByAssetClass = proportionalAllocate(
-    10000,
+    TOTAL_BPS,
     [...resultingTotals.entries()].map(([key, value]) => ({ key, weight: value })),
   );
 
@@ -472,8 +472,8 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     }
     weightSum += target.weight;
   }
-  if (weightSum !== 10000) {
-    throw new Error(`Target weights must sum to exactly 10000 basis points, got ${weightSum}.`);
+  if (weightSum !== TOTAL_BPS) {
+    throw new Error(`Target weights must sum to exactly ${TOTAL_BPS} basis points, got ${weightSum}.`);
   }
 
   for (const contribution of options.contributions) {
@@ -486,8 +486,8 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   }
 
   if (options.toleranceBps !== undefined) {
-    if (!Number.isInteger(options.toleranceBps) || options.toleranceBps < 0 || options.toleranceBps > 10000) {
-      throw new Error(`toleranceBps must be an integer between 0 and 10000, got ${options.toleranceBps}.`);
+    if (!Number.isInteger(options.toleranceBps) || options.toleranceBps < 0 || options.toleranceBps > TOTAL_BPS) {
+      throw new Error(`toleranceBps must be an integer between 0 and ${TOTAL_BPS}, got ${options.toleranceBps}.`);
     }
   }
   if (options.minTradeCents !== undefined) {
