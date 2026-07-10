@@ -59,6 +59,37 @@ describe("rebalance - golden fixture", () => {
     expect(result.warnings[0]).toContain("received no contribution");
   });
 
+  it("reports a per-account before/after breakdown that matches the trades", () => {
+    const { portfolio, targets, contributions } = loadExample();
+    const result = rebalance(portfolio, targets, { contributions });
+
+    expect(result.accounts.map((a) => a.accountId)).toEqual(["hsa", "k401", "roth_ira", "spouse_ira", "taxable"]);
+
+    const k401 = result.accounts.find((a) => a.accountId === "k401")!;
+    expect(k401).toEqual({
+      accountId: "k401",
+      contribution: 15000,
+      currentTotal: 2000000,
+      finalTotal: 2015000,
+      positions: [
+        { fundId: "bnd", currentValue: 500000, tradeDelta: 15000, finalValue: 515000 },
+        { fundId: "vti", currentValue: 1500000, tradeDelta: 0, finalValue: 1500000 },
+      ],
+    });
+
+    // An account with no contribution and no trades still appears, unchanged.
+    const spouseIra = result.accounts.find((a) => a.accountId === "spouse_ira")!;
+    expect(spouseIra.contribution).toBe(0);
+    expect(spouseIra.finalTotal).toBe(spouseIra.currentTotal);
+    expect(spouseIra.positions).toEqual([{ fundId: "bnd", currentValue: 500000, tradeDelta: 0, finalValue: 500000 }]);
+
+    // Class-level current/target dollars round-trip too.
+    const intlStocks = result.resultingAllocation.find((a) => a.assetClassId === "intl_stocks")!;
+    expect(intlStocks.currentValue).toBe(800000);
+    expect(intlStocks.targetValue).toBe(1212000);
+    expect(intlStocks.value).toBe(845000);
+  });
+
   it("fully invests the contribution and conserves total portfolio value", () => {
     const { portfolio, targets, contributions } = loadExample();
     const result = rebalance(portfolio, targets, { contributions });

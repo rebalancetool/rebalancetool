@@ -138,10 +138,39 @@ export interface Scenario {
 
 export interface AllocationEntry {
   assetClassId: string;
-  /** Integer cents, summed across all accounts. */
+  /** Post-trade value in integer cents, summed across all accounts. */
   value: number;
   /** Integer basis points of the total portfolio (post-trade). */
   weight: number;
+  /** Value before any trades or contributions, integer cents. */
+  currentValue: number;
+  /** Target dollars at the post-contribution portfolio total, integer cents. */
+  targetValue: number;
+}
+
+export interface PositionBreakdown {
+  fundId: string;
+  /** Held value before trades, integer cents. */
+  currentValue: number;
+  /** Buys minus sells of this fund, integer cents (0 = untouched). */
+  tradeDelta: number;
+  /** currentValue + tradeDelta. */
+  finalValue: number;
+}
+
+/**
+ * Per-account before/after view: what each account holds now, what the
+ * trades change, and where it ends up. finalTotal is always currentTotal +
+ * contribution, because money never leaves an account.
+ */
+export interface AccountBreakdown {
+  accountId: string;
+  /** Contribution cash earmarked to this account, integer cents. */
+  contribution: number;
+  currentTotal: number;
+  finalTotal: number;
+  /** Sorted by fundId; includes untouched holdings. */
+  positions: PositionBreakdown[];
 }
 
 export interface DeviationEntry {
@@ -154,6 +183,8 @@ export interface DeviationEntry {
 
 export interface RebalanceResult {
   trades: Trade[];
+  /** Per-account before/after breakdown, sorted by accountId. */
+  accounts: AccountBreakdown[];
   resultingAllocation: AllocationEntry[];
   deviationFromTarget: DeviationEntry[];
   warnings: string[];

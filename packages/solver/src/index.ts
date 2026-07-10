@@ -3,6 +3,7 @@ export { validateScenario } from "./scenario.ts";
 export { DEFAULT_TOLERANCE_BPS } from "./types.ts";
 export type {
   Account,
+  AccountBreakdown,
   AllocationEntry,
   AssetClass,
   Contribution,
@@ -10,6 +11,7 @@ export type {
   Fund,
   Holding,
   Portfolio,
+  PositionBreakdown,
   RebalanceOptions,
   RebalanceResult,
   Scenario,

@@ -294,9 +294,39 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     }
   }
 
+  // --- per-account before/after breakdown ---
+  const tradeDeltas = new Map<string, Map<string, number>>();
+  for (const trade of trades) {
+    const row = tradeDeltas.get(trade.accountId) ?? new Map<string, number>();
+    const delta = trade.action === "buy" ? trade.amount : -trade.amount;
+    row.set(trade.fundId, (row.get(trade.fundId) ?? 0) + delta);
+    tradeDeltas.set(trade.accountId, row);
+  }
+  const accounts = accountsByIdOrder.map((account) => {
+    const fundRow = heldFundValues.get(account.id)!;
+    const deltas = tradeDeltas.get(account.id) ?? new Map<string, number>();
+    const positions = [...new Set([...fundRow.keys(), ...deltas.keys()])].sort().map((fundId) => {
+      const currentValue = fundRow.get(fundId) ?? 0;
+      const tradeDelta = deltas.get(fundId) ?? 0;
+      return { fundId, currentValue, tradeDelta, finalValue: currentValue + tradeDelta };
+    });
+    const contribution = accountCash.get(account.id) ?? 0;
+    const currentTotal = positions.reduce((sum, p) => sum + p.currentValue, 0);
+    return { accountId: account.id, contribution, currentTotal, finalTotal: currentTotal + contribution, positions };
+  });
+
   // --- resulting allocation & deviation, post-trade ---
+  const currentTotals = new Map<string, number>();
   const resultingTotals = new Map<string, number>();
-  for (const assetClass of portfolio.assetClasses) resultingTotals.set(assetClass.id, 0);
+  for (const assetClass of portfolio.assetClasses) {
+    currentTotals.set(assetClass.id, 0);
+    resultingTotals.set(assetClass.id, 0);
+  }
+  for (const row of currentByAccount.values()) {
+    for (const [assetClassId, value] of row) {
+      currentTotals.set(assetClassId, (currentTotals.get(assetClassId) ?? 0) + value);
+    }
+  }
   for (const row of allocation.x.values()) {
     for (const [assetClassId, value] of row) {
       resultingTotals.set(assetClassId, (resultingTotals.get(assetClassId) ?? 0) + value);
@@ -312,6 +342,8 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     assetClassId,
     value: resultingTotals.get(assetClassId) ?? 0,
     weight: resultingWeightByAssetClass.get(assetClassId) ?? 0,
+    currentValue: currentTotals.get(assetClassId) ?? 0,
+    targetValue: demands.get(assetClassId) ?? 0,
   }));
 
   const targetWeightByAssetClass = new Map(targets.map((t) => [t.assetClassId, t.weight]));
@@ -322,7 +354,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     return { assetClassId, targetWeight, actualWeight, deviationBps: actualWeight - targetWeight };
   });
 
-  return { trades, resultingAllocation, deviationFromTarget, warnings };
+  return { trades, accounts, resultingAllocation, deviationFromTarget, warnings };
 }
 
 /**
