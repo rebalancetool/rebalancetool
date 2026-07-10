@@ -44,8 +44,28 @@ import type { Allocation, AllocationWarning, ProblemAccount, ProblemAssetClass, 
  * deterministic, so shuffled inputs produce the identical model and result.
  */
 
-/** Slack on lexicographic pins, generous for float noise at cent scale. */
+/**
+ * All true quantities are integer cents, but the simplex returns floats: a
+ * value within half a cent of an integer can only mean that integer, so a
+ * float difference below this threshold can never be a real cent of
+ * trading. Used to decide what counts as "actually sold" and what snaps
+ * back to its current value.
+ */
+const HALF_CENT = 0.5;
+
+/**
+ * Added inside Math.floor() so accumulated float error just *below* an
+ * integer (e.g. 4.9999997 for a true 5) floors to the intended value.
+ * Must stay far smaller than HALF_CENT so it can never flip a genuine
+ * fractional part up to the next cent.
+ */
+const FLOOR_GUARD = 1e-6;
+
+/** Absolute slack on lexicographic pins, generous for float noise at cent scale. */
 const PIN_EPSILON = 1e-3;
+
+/** Relative slack on lexicographic pins, for objectives at large dollar magnitudes. */
+const PIN_RELATIVE = 1e-9;
 
 export function allocateLp(problem: TransportationProblem): Allocation {
   const accounts = [...problem.accounts].sort((a, b) => a.id.localeCompare(b.id));
@@ -69,7 +89,7 @@ export function allocateLp(problem: TransportationProblem): Allocation {
         const key = `${account.id} ${assetClass.id}`;
         if (bannedSells.has(key)) continue;
         const sold = held(account.id, assetClass.id) - (finalValues.get(`x ${key}`) ?? 0);
-        if (sold > 0.5 && sold < problem.minTradeCents - 0.5) {
+        if (sold > HALF_CENT && sold < problem.minTradeCents - HALF_CENT) {
           bannedSells.add(key);
           bannedThisPass = true;
         }
@@ -92,8 +112,8 @@ export function allocateLp(problem: TransportationProblem): Allocation {
       .map((assetClass) => {
         const current = held(account.id, assetClass.id);
         const raw = Math.max(0, finalValues.get(`x ${account.id} ${assetClass.id}`) ?? current);
-        const snapped = Math.abs(raw - current) < 0.5;
-        const value = snapped ? current : Math.floor(raw + 1e-6);
+        const snapped = Math.abs(raw - current) < HALF_CENT;
+        const value = snapped ? current : Math.floor(raw + FLOOR_GUARD);
         const sellCap = bannedSells.has(`${account.id} ${assetClass.id}`)
           ? 0
           : Math.max(0, Math.min(current, problem.sellable(account.id, assetClass.id)));
@@ -270,7 +290,7 @@ function solveLexicographic(
     if (solution.status !== "optimal") {
       throw new Error(`LP allocation failed at stage "${stage.objective}": ${solution.status}.`);
     }
-    const pin = Math.abs(solution.result) * 1e-9 + PIN_EPSILON;
+    const pin = Math.abs(solution.result) * PIN_RELATIVE + PIN_EPSILON;
     constraints.set(
       stage.objective,
       stage.direction === "minimize" ? { max: solution.result + pin } : { min: solution.result - pin },
