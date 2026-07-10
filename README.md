@@ -62,9 +62,11 @@ block atop `packages/solver/src/rebalance.ts`):
 4. Any gap that survives both passes is reported as a warning, not silently
    dropped. Every trade carries a human-readable `reason`.
 
-**Output** (`RebalanceResult`): the list of `trades` (buys *and* sells), the
-`resultingAllocation` and `deviationFromTarget` after applying them, and any
-`warnings`.
+**Output** (`RebalanceResult`): the list of `trades` (buys *and* sells), a
+per-account before/after breakdown (`accounts`: contribution, totals, and
+every position's current/traded/final value), the `resultingAllocation`
+(with current and target dollars per asset class) and `deviationFromTarget`
+after applying the trades, and any `warnings`.
 
 Everything is pure and deterministic: same input always produces the same
 output, regardless of array ordering, with no I/O, no floats for money
@@ -150,7 +152,14 @@ pnpm solve -p packages/solver/fixtures/sell-required.json
 ```
 
 The output lists trades grouped by account (sells before buys, each with its
-reason), the resulting allocation vs target, and any warnings.
+reason), a per-asset-class table of current → target → trades → final value
+with the remaining dollar/percent deviation, a per-account breakdown showing
+every position's current, traded, and final value (so you can verify the
+starting numbers against your real accounts and the final ones after
+executing the trades), and any warnings. Warnings are reserved for
+actionable problems — e.g. a targeted asset class that no funded account
+offers — not for ordinary "contribution wasn't enough" shortfalls, which the
+tables already show.
 
 ## Scope
 

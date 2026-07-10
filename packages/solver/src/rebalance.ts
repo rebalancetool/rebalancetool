@@ -245,36 +245,88 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       a.fundId.localeCompare(b.fundId),
   );
 
-  const warnings = allocation.warnings.map((w) => {
+  // Warnings are for things the user can act on. A gap left open merely
+  // because contributions ran out is not one of them — the result's
+  // allocation data already shows every shortfall — so only structural
+  // problems are reported: no account offers the class at all, the accounts
+  // that do got no cash, or selling was enabled but blocked.
+  const warnings: string[] = [];
+  for (const w of allocation.warnings) {
     switch (w.kind) {
       case "unreachable_gap": {
         const assetClass = assetClassesById.get(w.assetClassId)!;
-        if (!allowSelling) {
-          return (
-            `No account with remaining contribution cash offers a fund for "${assetClass.name}"; ` +
-            `${formatDollars(w.remainingGap)} of gap will remain unclosed this run.`
+        if (allowSelling) {
+          warnings.push(
+            `${assetClass.name} is still ${formatDollars(w.remainingGap)} under target even with selling enabled` +
+              (sellInTaxableAccounts ? "." : " (selling in taxable accounts is disabled)."),
+          );
+          break;
+        }
+        const offering = portfolio.accounts
+          .filter((account) => accountHasFundFor(account, w.assetClassId, fundsById))
+          .sort((a, b) => a.id.localeCompare(b.id));
+        if (offering.length === 0) {
+          warnings.push(
+            `${assetClass.name} is ${formatDollars(w.remainingGap)} under target, but no account offers a fund for it.`,
+          );
+        } else if (offering.every((account) => (accountCash.get(account.id) ?? 0) === 0)) {
+          const names = offering.map((account) => account.name).join(", ");
+          warnings.push(
+            `${assetClass.name} is ${formatDollars(w.remainingGap)} under target, but ` +
+              (offering.length === 1
+                ? `only ${names} offers a fund for it, and it received no contribution.`
+                : `the accounts offering a fund for it (${names}) received no contributions.`),
           );
         }
-        return (
-          `Even with selling enabled, ${formatDollars(w.remainingGap)} of the gap for "${assetClass.name}" ` +
-          `cannot be closed: no account that offers a fund for it holds enough sellable overweight positions` +
-          (sellInTaxableAccounts ? "." : " (selling in taxable accounts is disabled).")
-        );
+        // Otherwise: funded accounts offer it and the cash simply went to
+        // bigger gaps — visible in the allocation, not warning-worthy.
+        break;
       }
       case "leftover_cash": {
         const account = accountsById.get(w.accountId)!;
         const fund = fundsById.get(account.availableFundIds[0]!)!;
-        return (
-          `Account "${account.name}" had ${formatDollars(w.amount)} left after closing every reachable gap; ` +
-          `invested it in ${fund.ticker ?? fund.name} rather than leaving it uninvested.`
+        warnings.push(
+          `${account.name} had ${formatDollars(w.amount)} of contribution left after closing every reachable gap; ` +
+            `invested it in ${fund.ticker ?? fund.name}, its most-preferred fund.`,
         );
+        break;
       }
     }
+  }
+
+  // --- per-account before/after breakdown ---
+  const tradeDeltas = new Map<string, Map<string, number>>();
+  for (const trade of trades) {
+    const row = tradeDeltas.get(trade.accountId) ?? new Map<string, number>();
+    const delta = trade.action === "buy" ? trade.amount : -trade.amount;
+    row.set(trade.fundId, (row.get(trade.fundId) ?? 0) + delta);
+    tradeDeltas.set(trade.accountId, row);
+  }
+  const accounts = accountsByIdOrder.map((account) => {
+    const fundRow = heldFundValues.get(account.id)!;
+    const deltas = tradeDeltas.get(account.id) ?? new Map<string, number>();
+    const positions = [...new Set([...fundRow.keys(), ...deltas.keys()])].sort().map((fundId) => {
+      const currentValue = fundRow.get(fundId) ?? 0;
+      const tradeDelta = deltas.get(fundId) ?? 0;
+      return { fundId, currentValue, tradeDelta, finalValue: currentValue + tradeDelta };
+    });
+    const contribution = accountCash.get(account.id) ?? 0;
+    const currentTotal = positions.reduce((sum, p) => sum + p.currentValue, 0);
+    return { accountId: account.id, contribution, currentTotal, finalTotal: currentTotal + contribution, positions };
   });
 
   // --- resulting allocation & deviation, post-trade ---
+  const currentTotals = new Map<string, number>();
   const resultingTotals = new Map<string, number>();
-  for (const assetClass of portfolio.assetClasses) resultingTotals.set(assetClass.id, 0);
+  for (const assetClass of portfolio.assetClasses) {
+    currentTotals.set(assetClass.id, 0);
+    resultingTotals.set(assetClass.id, 0);
+  }
+  for (const row of currentByAccount.values()) {
+    for (const [assetClassId, value] of row) {
+      currentTotals.set(assetClassId, (currentTotals.get(assetClassId) ?? 0) + value);
+    }
+  }
   for (const row of allocation.x.values()) {
     for (const [assetClassId, value] of row) {
       resultingTotals.set(assetClassId, (resultingTotals.get(assetClassId) ?? 0) + value);
@@ -290,6 +342,8 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     assetClassId,
     value: resultingTotals.get(assetClassId) ?? 0,
     weight: resultingWeightByAssetClass.get(assetClassId) ?? 0,
+    currentValue: currentTotals.get(assetClassId) ?? 0,
+    targetValue: demands.get(assetClassId) ?? 0,
   }));
 
   const targetWeightByAssetClass = new Map(targets.map((t) => [t.assetClassId, t.weight]));
@@ -300,7 +354,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     return { assetClassId, targetWeight, actualWeight, deviationBps: actualWeight - targetWeight };
   });
 
-  return { trades, resultingAllocation, deviationFromTarget, warnings };
+  return { trades, accounts, resultingAllocation, deviationFromTarget, warnings };
 }
 
 /**
@@ -359,7 +413,11 @@ function pickFund(account: Account, assetClassId: string, fundsById: Map<string,
 }
 
 function formatDollars(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  const dollars = (Math.abs(cents) / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${cents < 0 ? "-" : ""}$${dollars}`;
 }
 
 function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOptions): void {

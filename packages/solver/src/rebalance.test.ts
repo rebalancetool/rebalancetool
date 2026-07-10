@@ -44,20 +44,50 @@ describe("rebalance - golden fixture", () => {
     }
   });
 
-  it("never touches the already-overweight fund and flags every unreachable gap", () => {
+  it("never touches the already-overweight fund and warns only about actionable gaps", () => {
     const { portfolio, targets, contributions } = loadExample();
     const result = rebalance(portfolio, targets, { contributions });
 
     expect(result.trades.some((t) => t.fundId === "vti")).toBe(false);
-    // intl_bonds and us_small_cap_value are never reachable (no funded account
-    // offers those funds); intl_stocks and us_bonds each get partially closed
-    // before the accounts that could fund them run out of cash.
-    expect(result.warnings).toHaveLength(4);
-    const allWarnings = result.warnings.join(" ");
-    expect(allWarnings).toContain("International Bonds");
-    expect(allWarnings).toContain("International Stocks");
-    expect(allWarnings).toContain("US Small-Cap Value");
-    expect(allWarnings).toContain("US Bonds");
+    // Four asset classes end below target, but only intl_bonds is
+    // *structurally* stuck: the sole account offering BNDX (spouse IRA) got
+    // no contribution. The others just ran out of cash, which the allocation
+    // data already shows — no warning for those.
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("International Bonds");
+    expect(result.warnings[0]).toContain("Spouse Traditional IRA");
+    expect(result.warnings[0]).toContain("received no contribution");
+  });
+
+  it("reports a per-account before/after breakdown that matches the trades", () => {
+    const { portfolio, targets, contributions } = loadExample();
+    const result = rebalance(portfolio, targets, { contributions });
+
+    expect(result.accounts.map((a) => a.accountId)).toEqual(["hsa", "k401", "roth_ira", "spouse_ira", "taxable"]);
+
+    const k401 = result.accounts.find((a) => a.accountId === "k401")!;
+    expect(k401).toEqual({
+      accountId: "k401",
+      contribution: 15000,
+      currentTotal: 2000000,
+      finalTotal: 2015000,
+      positions: [
+        { fundId: "bnd", currentValue: 500000, tradeDelta: 15000, finalValue: 515000 },
+        { fundId: "vti", currentValue: 1500000, tradeDelta: 0, finalValue: 1500000 },
+      ],
+    });
+
+    // An account with no contribution and no trades still appears, unchanged.
+    const spouseIra = result.accounts.find((a) => a.accountId === "spouse_ira")!;
+    expect(spouseIra.contribution).toBe(0);
+    expect(spouseIra.finalTotal).toBe(spouseIra.currentTotal);
+    expect(spouseIra.positions).toEqual([{ fundId: "bnd", currentValue: 500000, tradeDelta: 0, finalValue: 500000 }]);
+
+    // Class-level current/target dollars round-trip too.
+    const intlStocks = result.resultingAllocation.find((a) => a.assetClassId === "intl_stocks")!;
+    expect(intlStocks.currentValue).toBe(800000);
+    expect(intlStocks.targetValue).toBe(1212000);
+    expect(intlStocks.value).toBe(845000);
   });
 
   it("fully invests the contribution and conserves total portfolio value", () => {
@@ -343,6 +373,30 @@ describe("rebalance - core invariants", () => {
 
     expect(result.trades).toHaveLength(1);
     expect(result.trades[0]!.fundId).toBe("fund_b");
+  });
+
+  it("warns when a targeted asset class is offered by no account at all", () => {
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "stocks", name: "Stocks" },
+        { id: "gold", name: "Gold" },
+      ],
+      funds: [
+        { id: "vti", name: "VTI", assetClassId: "stocks" },
+        { id: "gld", name: "GLD", assetClassId: "gold" },
+      ],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["vti"] }],
+      holdings: [{ accountId: "acct", fundId: "vti", value: 10000 }],
+    };
+    const targets: Target[] = [
+      { assetClassId: "stocks", weight: 9000 },
+      { assetClassId: "gold", weight: 1000 },
+    ];
+    const result = rebalance(portfolio, targets, { contributions: [{ accountId: "acct", amount: 1000 }] });
+
+    expect(result.warnings.some((w) => w.includes("no account offers a fund for it") && w.includes("Gold"))).toBe(
+      true,
+    );
   });
 
   it("rejects targets that do not sum to 10000 bps", () => {

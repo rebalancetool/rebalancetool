@@ -86,6 +86,13 @@ describe("rebalance - properties (fast-check)", () => {
             .filter((t) => t.accountId === accountId)
             .reduce((s, t) => s + (t.action === "buy" ? t.amount : -t.amount), 0);
           expect(net).toBe(contributed);
+
+          // The account breakdown must tell the same story as the trades.
+          const breakdown = result.accounts.find((a) => a.accountId === accountId)!;
+          expect(breakdown.contribution).toBe(contributed);
+          expect(breakdown.finalTotal).toBe(breakdown.currentTotal + contributed);
+          const positionsFinal = breakdown.positions.reduce((s, p) => s + p.finalValue, 0);
+          expect(positionsFinal).toBe(breakdown.finalTotal);
         }
       }),
     );
