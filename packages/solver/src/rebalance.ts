@@ -413,7 +413,11 @@ function pickFund(account: Account, assetClassId: string, fundsById: Map<string,
 }
 
 function formatDollars(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  const dollars = (Math.abs(cents) / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${cents < 0 ? "-" : ""}$${dollars}`;
 }
 
 function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOptions): void {

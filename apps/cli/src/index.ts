@@ -48,11 +48,35 @@ function parseIntFlag(raw: string, flag: string): number {
 }
 
 function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  const dollars = (Math.abs(cents) / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${cents < 0 ? "-" : ""}$${dollars}`;
 }
 
-function formatBps(bps: number): string {
-  return `${(bps / 100).toFixed(2)}%`;
+/** "+$400.00" / "-$400.00", or an em dash for zero (no trade). */
+function formatDelta(cents: number): string {
+  if (cents === 0) return "—";
+  return `${cents > 0 ? "+" : ""}${formatCents(cents)}`;
+}
+
+/** Pads each column to its widest cell; first column left-aligned, rest right-aligned. */
+function renderColumns(rows: string[][], indent: string): string[] {
+  const widths: number[] = [];
+  for (const row of rows) {
+    row.forEach((cell, i) => {
+      widths[i] = Math.max(widths[i] ?? 0, cell.length);
+    });
+  }
+  return rows.map(
+    (row) =>
+      indent +
+      row
+        .map((cell, i) => (i === 0 ? cell.padEnd(widths[i]!) : cell.padStart(widths[i]!)))
+        .join("  ")
+        .trimEnd(),
+  );
 }
 
 function printTrades(scenario: Scenario, result: RebalanceResult): void {
@@ -81,18 +105,54 @@ function printTrades(scenario: Scenario, result: RebalanceResult): void {
 
 function printAllocation(scenario: Scenario, result: RebalanceResult): void {
   const namesByClassId = new Map(scenario.portfolio.assetClasses.map((ac) => [ac.id, ac.name]));
-  const valueByClassId = new Map(result.resultingAllocation.map((a) => [a.assetClassId, a.value]));
+  const deviationBpsByClassId = new Map(result.deviationFromTarget.map((d) => [d.assetClassId, d.deviationBps]));
 
-  console.log("\nResulting allocation:");
-  console.table(
-    result.deviationFromTarget.map((deviation) => ({
-      "asset class": namesByClassId.get(deviation.assetClassId) ?? deviation.assetClassId,
-      value: formatCents(valueByClassId.get(deviation.assetClassId) ?? 0),
-      actual: formatBps(deviation.actualWeight),
-      target: formatBps(deviation.targetWeight),
-      "deviation (bps)": deviation.deviationBps,
-    })),
-  );
+  console.log("\nPortfolio by asset class:\n");
+  const rows: string[][] = [["asset class", "current", "target", "trades", "final", "vs target"]];
+  for (const entry of result.resultingAllocation) {
+    const deviationBps = deviationBpsByClassId.get(entry.assetClassId) ?? 0;
+    const vsTarget = entry.value - entry.targetValue;
+    rows.push([
+      namesByClassId.get(entry.assetClassId) ?? entry.assetClassId,
+      formatCents(entry.currentValue),
+      formatCents(entry.targetValue),
+      formatDelta(entry.value - entry.currentValue),
+      formatCents(entry.value),
+      vsTarget === 0
+        ? "on target"
+        : `${formatDelta(vsTarget)} (${deviationBps >= 0 ? "+" : ""}${(deviationBps / 100).toFixed(1)}%)`,
+    ]);
+  }
+  for (const line of renderColumns(rows, "  ")) console.log(line);
+}
+
+function printAccounts(scenario: Scenario, result: RebalanceResult): void {
+  const accountsById = new Map(scenario.portfolio.accounts.map((a) => [a.id, a]));
+  const fundsById = new Map(scenario.portfolio.funds.map((f) => [f.id, f]));
+
+  console.log("\nAccounts:");
+  for (const breakdown of result.accounts) {
+    const account = accountsById.get(breakdown.accountId)!;
+    console.log(`\n  ${account.name} (${account.taxType})`);
+    const rows: string[][] = [["", "current", "trades", "final"]];
+    for (const position of breakdown.positions) {
+      const fund = fundsById.get(position.fundId)!;
+      rows.push([
+        fund.ticker ?? fund.name,
+        formatCents(position.currentValue),
+        formatDelta(position.tradeDelta),
+        formatCents(position.finalValue),
+      ]);
+    }
+    const totalLabel = breakdown.contribution > 0 ? `total (+${formatCents(breakdown.contribution)} cash in)` : "total";
+    rows.push([
+      totalLabel,
+      formatCents(breakdown.currentTotal),
+      formatDelta(breakdown.finalTotal - breakdown.currentTotal),
+      formatCents(breakdown.finalTotal),
+    ]);
+    for (const line of renderColumns(rows, "    ")) console.log(line);
+  }
 }
 
 function printWarnings(result: RebalanceResult): void {
@@ -150,6 +210,7 @@ function main(): void {
 
   printTrades(scenario, result);
   printAllocation(scenario, result);
+  printAccounts(scenario, result);
   printWarnings(result);
 }
 
