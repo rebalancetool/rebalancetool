@@ -1,5 +1,6 @@
 import { allocate } from "./allocate.ts";
 import type { TransportationProblem } from "./allocate.ts";
+import { DEFAULT_TOLERANCE_BPS } from "./types.ts";
 import type {
   Account,
   AllocationEntry,
@@ -66,7 +67,11 @@ import type {
  *      account that can buy the underweight class and holds an overweight
  *      one, sells the overweight position (least-preferred fund first) and
  *      redeploys the proceeds in place. Any gap that survives both passes
- *      is reported as a warning.
+ *      is reported as a warning. Everything is governed by the tolerance
+ *      band (toleranceBps, default 50): a class within ±band of its target
+ *      weight is treated as on-target — not bought toward, not sold down,
+ *      not "fixed" by selling, and not warned about — so trivial drift never
+ *      triggers trades.
  *   5. Contributions must be fully invested — cash cannot be left
  *      sitting idle in an account. So once every gap reachable from an
  *      account's contribution has been closed (or is permanently blocked),
@@ -90,6 +95,8 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   const allowSelling = options.allowSelling ?? false;
   const sellInTaxableAccounts = options.sellInTaxableAccounts ?? false;
+  const toleranceBps = options.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
+  const minTradeCents = options.minTradeCents ?? 0;
 
   // --- Step 1: current holdings per account, by asset class and by fund ---
   const currentByAccount = new Map<string, Map<string, number>>();
@@ -151,6 +158,9 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       if (accountsById.get(accountId)!.taxType === "taxable" && !sellInTaxableAccounts) return 0;
       return currentByAccount.get(accountId)!.get(assetClassId) ?? 0;
     },
+    // ±toleranceBps of target weight, expressed in dollars of the new total.
+    toleranceCents: Math.floor((newTotal * toleranceBps) / 10000),
+    minTradeCents,
   };
 
   const allocation = allocate(problem);
@@ -412,6 +422,17 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     }
     if (!Number.isInteger(contribution.amount) || contribution.amount < 0) {
       throw new Error(`Contribution amount must be a non-negative integer number of cents, got ${contribution.amount}.`);
+    }
+  }
+
+  if (options.toleranceBps !== undefined) {
+    if (!Number.isInteger(options.toleranceBps) || options.toleranceBps < 0 || options.toleranceBps > 10000) {
+      throw new Error(`toleranceBps must be an integer between 0 and 10000, got ${options.toleranceBps}.`);
+    }
+  }
+  if (options.minTradeCents !== undefined) {
+    if (!Number.isInteger(options.minTradeCents) || options.minTradeCents < 0) {
+      throw new Error(`minTradeCents must be a non-negative integer number of cents, got ${options.minTradeCents}.`);
     }
   }
 }

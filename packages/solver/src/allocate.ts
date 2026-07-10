@@ -53,6 +53,14 @@ export interface TransportationProblem {
    * class below its portfolio-level demand.
    */
   sellable: (accountId: string, assetClassId: string) => number;
+  /**
+   * Tolerance band in integer cents. A class whose gap or excess is within
+   * the band is treated as on-target: it is not bought toward, not used as a
+   * sell donor, not fixed by selling, and not warned about.
+   */
+  toleranceCents: number;
+  /** Minimum size, in integer cents, of a single sell-pass move (0 = none). */
+  minTradeCents: number;
 }
 
 export type AllocationWarning =
@@ -78,13 +86,16 @@ export function allocate(problem: TransportationProblem): Allocation {
     cash.set(account.id, problem.cash.get(account.id) ?? 0);
   }
 
-  // Remaining under-target gap per asset class, at the whole-portfolio level.
+  // Remaining under-target gap per asset class, at the whole-portfolio
+  // level. A gap within the tolerance band is treated as on-target (zeroed);
+  // once a class is worth fixing at all, it is closed all the way to demand.
   const gap = new Map<string, number>();
   for (const assetClass of assetClasses) {
     const demand = problem.demands.get(assetClass.id) ?? 0;
     let held = 0;
     for (const account of accounts) held += x.get(account.id)!.get(assetClass.id) ?? 0;
-    gap.set(assetClass.id, Math.max(0, demand - held));
+    const raw = Math.max(0, demand - held);
+    gap.set(assetClass.id, raw <= problem.toleranceCents ? 0 : raw);
   }
 
   const warnings: AllocationWarning[] = [];
@@ -135,11 +146,14 @@ export function allocate(problem: TransportationProblem): Allocation {
   // class is ever sold below its own portfolio-level demand, and against the
   // caller's sellable(a, d) cap. With all caps at 0 (buy-only mode) this
   // pass is a no-op.
+  // Like gaps, an excess within the tolerance band is not worth trading:
+  // such a class is never used as a sell donor.
   const excess = new Map<string, number>();
   for (const assetClass of assetClasses) {
     let held = 0;
     for (const account of accounts) held += x.get(account.id)!.get(assetClass.id) ?? 0;
-    excess.set(assetClass.id, Math.max(0, held - (problem.demands.get(assetClass.id) ?? 0)));
+    const raw = Math.max(0, held - (problem.demands.get(assetClass.id) ?? 0));
+    excess.set(assetClass.id, raw <= problem.toleranceCents ? 0 : raw);
   }
 
   const sold = new Map<string, number>(); // "accountId assetClassId" -> cents sold so far
@@ -148,7 +162,9 @@ export function allocate(problem: TransportationProblem): Allocation {
     let bestAssetClassId: string | null = null;
     let bestGap = 0;
     for (const [assetClassId, g] of gap) {
-      if (g <= 0 || sellBlocked.has(assetClassId)) continue;
+      // Unlike the buy pass (where spending cash toward target is free), a
+      // sell is a new trade — never generate one for a gap inside the band.
+      if (g <= problem.toleranceCents || sellBlocked.has(assetClassId)) continue;
       if (g > bestGap || (g === bestGap && (bestAssetClassId === null || assetClassId < bestAssetClassId))) {
         bestGap = g;
         bestAssetClassId = assetClassId;
@@ -183,6 +199,7 @@ export function allocate(problem: TransportationProblem): Allocation {
           problem.sellable(account.id, donor.id) - (sold.get(soldKey) ?? 0),
         );
         if (capRemaining <= 0) continue;
+        if (Math.min(bestGap, donorExcess, capRemaining) < problem.minTradeCents) continue;
         if (bestDonor === null || donorExcess > (excess.get(bestDonor.donorId) ?? 0)) {
           bestDonor = { donorId: donor.id, cap: capRemaining };
         }
@@ -208,9 +225,9 @@ export function allocate(problem: TransportationProblem): Allocation {
     sold.set(soldKey, (sold.get(soldKey) ?? 0) + amount);
   }
 
-  // Gaps that survived both passes, largest first.
+  // Gaps that survived both passes and exceed the band, largest first.
   const unreachable = [...gap.entries()]
-    .filter(([, g]) => g > 0)
+    .filter(([, g]) => g > problem.toleranceCents)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   for (const [assetClassId, remainingGap] of unreachable) {
     warnings.push({ kind: "unreachable_gap", assetClassId, remainingGap });

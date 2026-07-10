@@ -11,6 +11,8 @@ function makeProblem(partial: Partial<TransportationProblem>): TransportationPro
     current: new Map(),
     buyable: () => true,
     sellable: () => 0,
+    toleranceCents: 0,
+    minTradeCents: 0,
     ...partial,
   };
 }

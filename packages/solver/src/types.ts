@@ -82,6 +82,13 @@ export interface Portfolio {
   holdings: Holding[];
 }
 
+/**
+ * Default tolerance band: an asset class within ±0.5% of its target weight
+ * is treated as on-target, so ordinary drift is absorbed by contributions
+ * instead of triggering trades. Pass toleranceBps: 0 for exact rebalancing.
+ */
+export const DEFAULT_TOLERANCE_BPS = 50;
+
 export interface RebalanceOptions {
   contributions: Contribution[];
   /**
@@ -98,6 +105,22 @@ export interface RebalanceOptions {
    * are never trimmed.
    */
   sellInTaxableAccounts?: boolean;
+  /**
+   * Tolerance band in basis points (default DEFAULT_TOLERANCE_BPS = 50). An
+   * asset class whose deviation from target is within the band is treated as
+   * on-target: it neither attracts rebalancing trades nor triggers an
+   * unreachable-gap warning, and positions within the band are never sold
+   * down. 0 = rebalance exactly. This is the governor that keeps the solver
+   * from churning the whole portfolio to fix trivial drift.
+   */
+  toleranceBps?: number;
+  /**
+   * Minimum size, in integer cents, of a sell-funded rebalancing move
+   * (default 0 = no minimum). Applies to the sell pass only: contribution
+   * cash is always fully invested, however small, because cash may not sit
+   * idle in an account.
+   */
+  minTradeCents?: number;
 }
 
 export interface AllocationEntry {
