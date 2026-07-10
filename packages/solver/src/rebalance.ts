@@ -1,3 +1,5 @@
+import { allocate } from "./allocate.ts";
+import type { TransportationProblem } from "./allocate.ts";
 import type {
   Account,
   AllocationEntry,
@@ -7,8 +9,6 @@ import type {
   RebalanceOptions,
   RebalanceResult,
   Target,
-  TaxPreference,
-  TaxType,
   Trade,
 } from "./types.ts";
 
@@ -19,6 +19,13 @@ import type {
  * force a portfolio to exactly match its targets in one pass — it can only
  * spend new contribution cash to move the portfolio *toward* target. Given
  * enough contributions over time, repeated runs converge on target.
+ *
+ * Structurally, rebalance() reduces its inputs to a TransportationProblem in
+ * (account × asset class) space and delegates the placement decision to
+ * allocate() (see allocate.ts — the optimizer-swappable seam); steps 3-5
+ * below describe the greedy placement allocate() currently implements.
+ * rebalance() then translates the returned allocation's deltas into Trades
+ * with human-readable reasons.
  *
  * Given a Portfolio and a set of Contributions (each earmarked to one
  * account — money never moves between accounts, mirroring the real-world
@@ -54,9 +61,9 @@ import type {
  *      sitting idle in an account. So once every gap reachable from an
  *      account's contribution has been closed (or is permanently blocked),
  *      any cash still remaining in that account is invested into that
- *      account's single most-preferred fund (availableFundIds[0]), with a warning explaining
- *      why (this can happen when a contribution is larger than needed to
- *      close that account's share of the gaps).
+ *      account's single most-preferred fund (availableFundIds[0]), with a
+ *      warning explaining why (this can happen when a contribution is larger
+ *      than needed to close that account's share of the gaps).
  *
  * Every trade carries a human-readable `reason`. All money math is done in
  * integer cents; all weights are integer basis points. Iteration never
@@ -69,14 +76,16 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   const fundsById = new Map(portfolio.funds.map((f) => [f.id, f]));
   const assetClassesById = new Map(portfolio.assetClasses.map((ac) => [ac.id, ac]));
+  const accountsById = new Map(portfolio.accounts.map((a) => [a.id, a]));
 
-  // --- Step 1: current holdings by asset class, across all accounts ---
-  const currentTotals = new Map<string, number>();
-  for (const assetClass of portfolio.assetClasses) currentTotals.set(assetClass.id, 0);
+  // --- Step 1: current holdings per account per asset class ---
+  const currentByAccount = new Map<string, Map<string, number>>();
+  for (const account of portfolio.accounts) currentByAccount.set(account.id, new Map());
   let currentPortfolioTotal = 0;
   for (const holding of portfolio.holdings) {
     const fund = fundsById.get(holding.fundId)!;
-    currentTotals.set(fund.assetClassId, (currentTotals.get(fund.assetClassId) ?? 0) + holding.value);
+    const row = currentByAccount.get(holding.accountId)!;
+    row.set(fund.assetClassId, (row.get(fund.assetClassId) ?? 0) + holding.value);
     currentPortfolioTotal += holding.value;
   }
 
@@ -88,125 +97,103 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     totalContribution += contribution.amount;
   }
 
+  for (const account of portfolio.accounts) {
+    if ((accountCash.get(account.id) ?? 0) > 0 && account.availableFundIds.length === 0) {
+      throw new Error(`Account "${account.id}" received a contribution but has no availableFundIds to invest it in.`);
+    }
+  }
+
   const newTotal = currentPortfolioTotal + totalContribution;
 
-  // --- Step 2: target dollars per asset class, and initial gaps ---
-  const targetValueByAssetClass = proportionalAllocate(
+  // --- Step 2: target dollars per asset class ---
+  const demands = proportionalAllocate(
     newTotal,
     targets.map((t) => ({ key: t.assetClassId, weight: t.weight })),
   );
 
-  const gap = new Map<string, number>();
-  for (const target of targets) {
-    const targetValue = targetValueByAssetClass.get(target.assetClassId) ?? 0;
-    const currentValue = currentTotals.get(target.assetClassId) ?? 0;
-    gap.set(target.assetClassId, Math.max(0, targetValue - currentValue));
+  // --- Steps 3-5: delegate placement to the allocation seam ---
+  const problem: TransportationProblem = {
+    accounts: portfolio.accounts.map((account) => ({
+      id: account.id,
+      taxType: account.taxType,
+      fallbackAssetClassId:
+        account.availableFundIds.length > 0 ? fundsById.get(account.availableFundIds[0]!)!.assetClassId : undefined,
+    })),
+    assetClasses: portfolio.assetClasses.map((assetClass) => ({
+      id: assetClass.id,
+      taxPreference: assetClass.taxPreference ?? "neutral",
+    })),
+    cash: accountCash,
+    demands,
+    current: currentByAccount,
+    buyable: (accountId, assetClassId) => accountHasFundFor(accountsById.get(accountId)!, assetClassId, fundsById),
+  };
+
+  const allocation = allocate(problem);
+
+  // --- translate allocation deltas (x[a][c] - H[a][c]) into trades ---
+  const leftoverByAccount = new Map<string, { assetClassId: string; amount: number }>();
+  for (const w of allocation.warnings) {
+    if (w.kind === "leftover_cash") leftoverByAccount.set(w.accountId, w);
   }
 
-  const warnings: string[] = [];
-  const blocked = new Set<string>();
-  const tradeMap = new Map<string, Trade>();
-
-  function addTrade(accountId: string, fund: Fund, amount: number, reason: string): void {
-    if (amount <= 0) return;
-    const key = `${accountId}::${fund.id}`;
-    const existing = tradeMap.get(key);
-    if (existing) {
-      existing.amount += amount;
-      existing.reason += ` ${reason}`;
-    } else {
-      tradeMap.set(key, { accountId, fundId: fund.id, action: "buy", amount, reason });
-    }
-  }
-
-  // --- Step 3 & 4: greedy waterfall ---
-  while (true) {
-    let bestAssetClassId: string | null = null;
-    let bestGap = 0;
-    for (const [assetClassId, g] of gap) {
-      if (g <= 0 || blocked.has(assetClassId)) continue;
-      if (g > bestGap || (g === bestGap && (bestAssetClassId === null || assetClassId < bestAssetClassId))) {
-        bestGap = g;
-        bestAssetClassId = assetClassId;
-      }
-    }
-    if (bestAssetClassId === null) break;
-
-    const assetClass = assetClassesById.get(bestAssetClassId)!;
-    const eligible = portfolio.accounts
-      .filter(
-        (account) =>
-          (accountCash.get(account.id) ?? 0) > 0 && accountHasFundFor(account, bestAssetClassId!, fundsById),
-      )
-      .sort((a, b) => {
-        const rankA = taxTypeRank(assetClass.taxPreference ?? "neutral", a.taxType);
-        const rankB = taxTypeRank(assetClass.taxPreference ?? "neutral", b.taxType);
-        if (rankA !== rankB) return rankA - rankB;
-        return a.id.localeCompare(b.id);
-      });
-
-    if (eligible.length === 0) {
-      blocked.add(bestAssetClassId);
-      warnings.push(
-        `No account with remaining contribution cash offers a fund for "${assetClass.name}"; ` +
-          `${formatDollars(bestGap)} of gap will remain unclosed this run.`,
-      );
-      continue;
-    }
-
-    const account = eligible[0]!;
-    const fund = pickFund(account, bestAssetClassId, fundsById);
-    const cash = accountCash.get(account.id)!;
-    const amount = Math.min(bestGap, cash);
-
-    addTrade(
-      account.id,
-      fund,
-      amount,
-      `${assetClass.name} is ${formatDollars(bestGap)} below target; buying ${fund.ticker ?? fund.name} in ${account.name}.`,
-    );
-
-    gap.set(bestAssetClassId, bestGap - amount);
-    accountCash.set(account.id, cash - amount);
-  }
-
-  // --- Step 5: invest any leftover earmarked cash so nothing sits idle ---
-  // Iterate accounts in id order (not input array order) so warnings/trades
-  // are identical regardless of how the caller ordered portfolio.accounts.
+  const trades: Trade[] = [];
   const accountsByIdOrder = [...portfolio.accounts].sort((a, b) => a.id.localeCompare(b.id));
   for (const account of accountsByIdOrder) {
-    const remaining = accountCash.get(account.id) ?? 0;
-    if (remaining <= 0) continue;
-
-    const fallbackFundId = account.availableFundIds[0];
-    if (!fallbackFundId) {
-      throw new Error(`Account "${account.id}" received a contribution but has no availableFundIds to invest it in.`);
+    const row = allocation.x.get(account.id)!;
+    const currentRow = currentByAccount.get(account.id)!;
+    for (const assetClassId of [...row.keys()].sort()) {
+      const delta = (row.get(assetClassId) ?? 0) - (currentRow.get(assetClassId) ?? 0);
+      if (delta <= 0) continue;
+      const fund = pickFund(account, assetClassId, fundsById);
+      const assetClass = assetClassesById.get(assetClassId)!;
+      const leftover = leftoverByAccount.get(account.id);
+      const leftoverPart = leftover !== undefined && leftover.assetClassId === assetClassId ? leftover.amount : 0;
+      const gapPart = delta - leftoverPart;
+      const reasons: string[] = [];
+      if (gapPart > 0) {
+        reasons.push(
+          `${assetClass.name} is below target; buying ${formatDollars(gapPart)} of ${fund.ticker ?? fund.name} in ${account.name}.`,
+        );
+      }
+      if (leftoverPart > 0) {
+        reasons.push(
+          `Investing ${formatDollars(leftoverPart)} of leftover contribution cash in ${fund.ticker ?? fund.name}, ` +
+            `the most-preferred fund of ${account.name}.`,
+        );
+      }
+      trades.push({ accountId: account.id, fundId: fund.id, action: "buy", amount: delta, reason: reasons.join(" ") });
     }
-    const fund = fundsById.get(fallbackFundId)!;
-
-    addTrade(
-      account.id,
-      fund,
-      remaining,
-      `Remaining reachable gaps for "${account.name}" are closed; investing leftover contribution in ` +
-        `${fund.ticker ?? fund.name}, its most-preferred fund.`,
-    );
-    warnings.push(
-      `Account "${account.name}" had ${formatDollars(remaining)} left after closing every reachable gap; ` +
-        `invested it in ${fund.ticker ?? fund.name} rather than leaving it uninvested.`,
-    );
-    accountCash.set(account.id, 0);
   }
+  trades.sort((a, b) => a.accountId.localeCompare(b.accountId) || a.fundId.localeCompare(b.fundId));
 
-  const trades = [...tradeMap.values()].sort(
-    (a, b) => a.accountId.localeCompare(b.accountId) || a.fundId.localeCompare(b.fundId),
-  );
+  const warnings = allocation.warnings.map((w) => {
+    switch (w.kind) {
+      case "unreachable_gap": {
+        const assetClass = assetClassesById.get(w.assetClassId)!;
+        return (
+          `No account with remaining contribution cash offers a fund for "${assetClass.name}"; ` +
+          `${formatDollars(w.remainingGap)} of gap will remain unclosed this run.`
+        );
+      }
+      case "leftover_cash": {
+        const account = accountsById.get(w.accountId)!;
+        const fund = fundsById.get(account.availableFundIds[0]!)!;
+        return (
+          `Account "${account.name}" had ${formatDollars(w.amount)} left after closing every reachable gap; ` +
+          `invested it in ${fund.ticker ?? fund.name} rather than leaving it uninvested.`
+        );
+      }
+    }
+  });
 
   // --- resulting allocation & deviation, post-trade ---
-  const resultingTotals = new Map(currentTotals);
-  for (const trade of trades) {
-    const fund = fundsById.get(trade.fundId)!;
-    resultingTotals.set(fund.assetClassId, (resultingTotals.get(fund.assetClassId) ?? 0) + trade.amount);
+  const resultingTotals = new Map<string, number>();
+  for (const assetClass of portfolio.assetClasses) resultingTotals.set(assetClass.id, 0);
+  for (const row of allocation.x.values()) {
+    for (const [assetClassId, value] of row) {
+      resultingTotals.set(assetClassId, (resultingTotals.get(assetClassId) ?? 0) + value);
+    }
   }
 
   const resultingWeightByAssetClass = proportionalAllocate(
@@ -284,14 +271,6 @@ function pickFund(account: Account, assetClassId: string, fundsById: Map<string,
     if (fund !== undefined && fund.assetClassId === assetClassId) return fund;
   }
   throw new Error(`Account "${account.id}" has no available fund for asset class "${assetClassId}".`);
-}
-
-/** Lower rank = more preferred account for this asset class's tax preference. */
-function taxTypeRank(preference: TaxPreference, taxType: TaxType): number {
-  if (preference === "neutral") return 0;
-  const isTaxAdvantaged = taxType === "tax_deferred" || taxType === "tax_free";
-  if (preference === "prefer_tax_advantaged") return isTaxAdvantaged ? 0 : 1;
-  return taxType === "taxable" ? 0 : 1; // prefer_taxable
 }
 
 function formatDollars(cents: number): string {
