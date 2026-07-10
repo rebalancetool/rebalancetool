@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rebalance } from "./rebalance.ts";
 import type { Account, AssetClass, Contribution, Fund, Holding, Portfolio, Target } from "./types.ts";
 import exampleFixtureRaw from "../fixtures/example.json" with { type: "json" };
+import sellRequiredFixtureRaw from "../fixtures/sell-required.json" with { type: "json" };
 
 interface ExampleFixture {
   assetClasses: AssetClass[];
@@ -16,11 +17,16 @@ interface ExampleFixture {
 // this fixture is trusted, hand-authored test data, so a single cast at the
 // boundary is fine.
 const exampleFixture = exampleFixtureRaw as unknown as ExampleFixture;
+const sellRequiredFixture = sellRequiredFixtureRaw as unknown as ExampleFixture;
 
-function loadExample() {
-  const { assetClasses, funds, accounts, holdings, targets, contributions } = exampleFixture;
+function loadFixture(fixture: ExampleFixture) {
+  const { assetClasses, funds, accounts, holdings, targets, contributions } = fixture;
   const portfolio: Portfolio = { assetClasses, funds, accounts, holdings };
   return { portfolio, targets, contributions };
+}
+
+function loadExample() {
+  return loadFixture(exampleFixture);
 }
 
 describe("rebalance - golden fixture", () => {
@@ -75,6 +81,146 @@ describe("rebalance - golden fixture", () => {
     const totalResulting = result.resultingAllocation.reduce((sum, a) => sum + a.value, 0);
     const totalHoldings = portfolio.holdings.reduce((sum, h) => sum + h.value, 0);
     expect(totalResulting).toBe(totalHoldings + totalContribution);
+  });
+});
+
+describe("rebalance - selling (golden fixture)", () => {
+  // Hand-traced against fixtures/sell-required.json: $200,000 total, no new
+  // cash. Target is 60/40 stocks/bonds = $120,000 / $80,000; current is
+  // $160,000 / $40,000. The only route to target is selling $40,000 of the
+  // IRA's VTI and rotating it into BND — the taxable account never trades.
+  it("rotates the IRA into bonds and reaches target exactly", () => {
+    const { portfolio, targets, contributions } = loadFixture(sellRequiredFixture);
+    const result = rebalance(portfolio, targets, { contributions, allowSelling: true });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "ira", fundId: "vti", action: "sell", amount: 4000000 },
+      { accountId: "ira", fundId: "bnd", action: "buy", amount: 4000000 },
+    ]);
+    for (const trade of result.trades) {
+      expect(trade.reason.length).toBeGreaterThan(0);
+    }
+    expect(result.warnings).toEqual([]);
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+  });
+
+  it("without allowSelling the same portfolio is stuck and warns", () => {
+    const { portfolio, targets, contributions } = loadFixture(sellRequiredFixture);
+    const result = rebalance(portfolio, targets, { contributions });
+
+    expect(result.trades).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("US Bonds");
+  });
+
+  it("conserves each account's total: buys minus sells equal the (zero) contribution", () => {
+    const { portfolio, targets, contributions } = loadFixture(sellRequiredFixture);
+    const result = rebalance(portfolio, targets, { contributions, allowSelling: true });
+
+    for (const account of portfolio.accounts) {
+      const net = result.trades
+        .filter((t) => t.accountId === account.id)
+        .reduce((sum, t) => sum + (t.action === "buy" ? t.amount : -t.amount), 0);
+      expect(net).toBe(0);
+    }
+  });
+});
+
+describe("rebalance - selling guards", () => {
+  // Overweight stocks live only in the taxable account: without
+  // sellInTaxableAccounts nothing may be sold, with it the taxable account
+  // rotates into bonds itself.
+  function taxableOnlyExcess(): { portfolio: Portfolio; targets: Target[] } {
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "us_stocks", name: "US Stocks", taxPreference: "prefer_taxable" },
+        { id: "us_bonds", name: "US Bonds", taxPreference: "prefer_tax_advantaged" },
+      ],
+      funds: [
+        { id: "vti", name: "VTI", assetClassId: "us_stocks" },
+        { id: "bnd", name: "BND", assetClassId: "us_bonds" },
+      ],
+      accounts: [
+        { id: "taxable", name: "Taxable", taxType: "taxable", availableFundIds: ["vti", "bnd"] },
+        { id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["bnd"] },
+      ],
+      holdings: [
+        { accountId: "taxable", fundId: "vti", value: 16000000 },
+        { accountId: "ira", fundId: "bnd", value: 4000000 },
+      ],
+    };
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 6000 },
+      { assetClassId: "us_bonds", weight: 4000 },
+    ];
+    return { portfolio, targets };
+  }
+
+  it("never trims taxable positions unless sellInTaxableAccounts is set", () => {
+    const { portfolio, targets } = taxableOnlyExcess();
+    const result = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
+
+    expect(result.trades).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("selling in taxable accounts is disabled");
+  });
+
+  it("with sellInTaxableAccounts the taxable account rotates into bonds", () => {
+    const { portfolio, targets } = taxableOnlyExcess();
+    const result = rebalance(portfolio, targets, {
+      contributions: [],
+      allowSelling: true,
+      sellInTaxableAccounts: true,
+    });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "taxable", fundId: "vti", action: "sell", amount: 4000000 },
+      { accountId: "taxable", fundId: "bnd", action: "buy", amount: 4000000 },
+    ]);
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+  });
+
+  it("sells the least-preferred fund of an overweight class first", () => {
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "stocks", name: "Stocks" },
+        { id: "bonds", name: "Bonds" },
+      ],
+      funds: [
+        { id: "vti", name: "VTI", assetClassId: "stocks" },
+        { id: "itot", name: "ITOT", assetClassId: "stocks" },
+        { id: "bnd", name: "BND", assetClassId: "bonds" },
+      ],
+      accounts: [
+        // vti is preferred over itot, so itot must be sold first.
+        { id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["bnd", "vti", "itot"] },
+      ],
+      holdings: [
+        { accountId: "ira", fundId: "vti", value: 3000 },
+        { accountId: "ira", fundId: "itot", value: 2000 },
+      ],
+    };
+    const targets: Target[] = [
+      { assetClassId: "stocks", weight: 2000 },
+      { assetClassId: "bonds", weight: 8000 },
+    ];
+    const result = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "ira", fundId: "itot", action: "sell", amount: 2000 },
+      { accountId: "ira", fundId: "vti", action: "sell", amount: 2000 },
+      { accountId: "ira", fundId: "bnd", action: "buy", amount: 4000 },
+    ]);
   });
 });
 

@@ -1,0 +1,41 @@
+{
+  "_comment": "Placeholder fixture for the selling golden test — not real account data. A drifted two-account household with no new cash: stocks are overweight and bonds underweight, so target is only reachable by selling. The IRA holds enough overweight VTI to rotate into BND without touching the taxable account.",
+
+  "assetClasses": [
+    { "id": "us_stocks", "name": "US Stocks", "taxPreference": "prefer_taxable" },
+    { "id": "us_bonds", "name": "US Bonds", "taxPreference": "prefer_tax_advantaged" }
+  ],
+
+  "funds": [
+    { "id": "vti", "ticker": "VTI", "name": "Vanguard Total Stock Market ETF", "assetClassId": "us_stocks" },
+    { "id": "bnd", "ticker": "BND", "name": "Vanguard Total Bond Market ETF", "assetClassId": "us_bonds" }
+  ],
+
+  "accounts": [
+    {
+      "id": "taxable",
+      "name": "Taxable Brokerage",
+      "taxType": "taxable",
+      "availableFundIds": ["vti"]
+    },
+    {
+      "id": "ira",
+      "name": "Traditional IRA",
+      "taxType": "tax_deferred",
+      "availableFundIds": ["bnd", "vti"]
+    }
+  ],
+
+  "holdings": [
+    { "accountId": "taxable", "fundId": "vti", "value": 10000000 },
+    { "accountId": "ira", "fundId": "vti", "value": 6000000 },
+    { "accountId": "ira", "fundId": "bnd", "value": 4000000 }
+  ],
+
+  "targets": [
+    { "assetClassId": "us_stocks", "weight": 6000 },
+    { "assetClassId": "us_bonds", "weight": 4000 }
+  ],
+
+  "contributions": []
+}

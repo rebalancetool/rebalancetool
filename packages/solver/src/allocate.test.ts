@@ -10,6 +10,7 @@ function makeProblem(partial: Partial<TransportationProblem>): TransportationPro
     demands: new Map(),
     current: new Map(),
     buyable: () => true,
+    sellable: () => 0,
     ...partial,
   };
 }
@@ -96,5 +97,121 @@ describe("allocate - greedy buy waterfall", () => {
       assetClassId: "stocks",
       amount: 7000,
     });
+  });
+});
+
+describe("allocate - sell pass", () => {
+  it("never sells a class below its portfolio-level demand, even across accounts", () => {
+    const result = allocate(
+      makeProblem({
+        accounts: [
+          { id: "acct_a", taxType: "tax_free", fallbackAssetClassId: "d" },
+          { id: "acct_b", taxType: "tax_free", fallbackAssetClassId: "d" },
+        ],
+        assetClasses: [
+          { id: "c", taxPreference: "neutral" },
+          { id: "d", taxPreference: "neutral" },
+        ],
+        demands: new Map([
+          ["c", 6000],
+          ["d", 9000],
+        ]),
+        current: new Map([
+          ["acct_a", new Map([["d", 10000]])],
+          ["acct_b", new Map([["d", 5000]])],
+        ]),
+        // Only acct_a can buy the underweight class.
+        buyable: (accountId, assetClassId) => assetClassId !== "c" || accountId === "acct_a",
+        sellable: () => Number.MAX_SAFE_INTEGER,
+      }),
+    );
+
+    // d's global excess is 15000 - 9000 = 6000; exactly that much is sold,
+    // all in acct_a, leaving d at its demand.
+    expect(result.x.get("acct_a")!.get("d")).toBe(4000);
+    expect(result.x.get("acct_a")!.get("c")).toBe(6000);
+    expect(result.x.get("acct_b")!.get("d")).toBe(5000);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("stops selling when the buying account runs out of overweight holdings and warns", () => {
+    const result = allocate(
+      makeProblem({
+        accounts: [
+          { id: "acct_a", taxType: "tax_free", fallbackAssetClassId: "d" },
+          { id: "acct_b", taxType: "tax_free", fallbackAssetClassId: "d" },
+        ],
+        assetClasses: [
+          { id: "c", taxPreference: "neutral" },
+          { id: "d", taxPreference: "neutral" },
+        ],
+        demands: new Map([
+          ["c", 6000],
+          ["d", 9000],
+        ]),
+        current: new Map([
+          ["acct_a", new Map([["d", 3000]])],
+          ["acct_b", new Map([["d", 12000]])],
+        ]),
+        buyable: (accountId, assetClassId) => assetClassId !== "c" || accountId === "acct_a",
+        sellable: () => Number.MAX_SAFE_INTEGER,
+      }),
+    );
+
+    // acct_a can only raise 3000 by selling everything it holds of d; the
+    // rest of c's gap is unreachable because acct_b cannot buy c.
+    expect(result.x.get("acct_a")!.get("d")).toBe(0);
+    expect(result.x.get("acct_a")!.get("c")).toBe(3000);
+    expect(result.x.get("acct_b")!.get("d")).toBe(12000);
+    expect(result.warnings).toEqual([{ kind: "unreachable_gap", assetClassId: "c", remainingGap: 3000 }]);
+  });
+
+  it("prefers selling in a tax-advantaged account even when id order disagrees", () => {
+    const result = allocate(
+      makeProblem({
+        accounts: [
+          { id: "a_taxable", taxType: "taxable", fallbackAssetClassId: "d" },
+          { id: "z_ira", taxType: "tax_deferred", fallbackAssetClassId: "d" },
+        ],
+        assetClasses: [
+          { id: "c", taxPreference: "neutral" },
+          { id: "d", taxPreference: "neutral" },
+        ],
+        demands: new Map([
+          ["c", 5000],
+          ["d", 11000],
+        ]),
+        current: new Map([
+          ["a_taxable", new Map([["d", 8000]])],
+          ["z_ira", new Map([["d", 8000]])],
+        ]),
+        sellable: () => Number.MAX_SAFE_INTEGER,
+      }),
+    );
+
+    expect(result.x.get("z_ira")!.get("d")).toBe(3000);
+    expect(result.x.get("z_ira")!.get("c")).toBe(5000);
+    expect(result.x.get("a_taxable")!.get("d")).toBe(8000);
+  });
+
+  it("sells nothing when every sellable cap is zero", () => {
+    const result = allocate(
+      makeProblem({
+        accounts: [{ id: "acct", taxType: "tax_free", fallbackAssetClassId: "d" }],
+        assetClasses: [
+          { id: "c", taxPreference: "neutral" },
+          { id: "d", taxPreference: "neutral" },
+        ],
+        demands: new Map([
+          ["c", 4000],
+          ["d", 6000],
+        ]),
+        current: new Map([["acct", new Map([["d", 10000]])]]),
+        sellable: () => 0,
+      }),
+    );
+
+    expect(result.x.get("acct")!.get("d")).toBe(10000);
+    expect(result.warnings).toEqual([{ kind: "unreachable_gap", assetClassId: "c", remainingGap: 4000 }]);
   });
 });

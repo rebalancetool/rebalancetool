@@ -69,8 +69,8 @@ export interface Contribution {
 export interface Trade {
   accountId: string;
   fundId: string;
-  action: "buy";
-  /** Integer cents. */
+  action: "buy" | "sell";
+  /** Integer cents, always positive (direction is carried by `action`). */
   amount: number;
   reason: string;
 }
@@ -84,6 +84,20 @@ export interface Portfolio {
 
 export interface RebalanceOptions {
   contributions: Contribution[];
+  /**
+   * Allow selling overweight positions to fund underweight ones. Cash raised
+   * by a sell never leaves its account — selling in account A can only fund
+   * buys in account A. A class is never sold below its portfolio-level
+   * target. Default false (buy-only).
+   */
+  allowSelling?: boolean;
+  /**
+   * Allow sells inside taxable accounts, where they can realize capital
+   * gains. Only meaningful with allowSelling. Default false: only
+   * tax-advantaged accounts are rebalanced by selling, and taxable positions
+   * are never trimmed.
+   */
+  sellInTaxableAccounts?: boolean;
 }
 
 export interface AllocationEntry {
