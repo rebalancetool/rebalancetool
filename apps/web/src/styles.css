@@ -262,6 +262,124 @@ thead .num-col {
   color: var(--text-muted);
 }
 
+/* Scenario editors */
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.editor-card {
+  margin-bottom: 0;
+}
+
+.editor-card h3 {
+  margin: 0 0 2px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.editor-hint {
+  display: block;
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.field-row .editor-hint,
+.check-row .editor-hint {
+  margin-bottom: 0;
+}
+
+.field-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.field-row:last-child {
+  border-bottom: none;
+}
+
+.field-label {
+  font-weight: 550;
+}
+
+.check-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-weight: 550;
+}
+
+.amount-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.amount-input input,
+select {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  text-align: right;
+  width: 110px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+select {
+  font-family: var(--sans);
+  text-align: left;
+  width: auto;
+}
+
+.amount-input.invalid input {
+  border-color: var(--sell);
+  background: #fdf0ef;
+}
+
+.total-line {
+  border-top: 1.5px solid var(--border-strong);
+  font-weight: 650;
+}
+
+.total-line.total-ok .num {
+  color: var(--buy);
+}
+
+.total-line.total-bad .num {
+  color: var(--sell);
+}
+
+.solve-error {
+  margin-top: 24px;
+  border-color: var(--sell);
+}
+
+.solve-error h3 {
+  margin: 0 0 4px;
+  color: var(--sell);
+  font-size: 15px;
+}
+
+.solve-error p {
+  margin: 0;
+}
+
 /* Warnings — reserved for actionable problems, so make them loud. */
 
 .warnings {
