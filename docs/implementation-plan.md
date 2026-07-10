@@ -1,5 +1,14 @@
 # Plan: selling support, `fundPreference` merge, JSON scenario format, CLI
 
+> **Status: implemented** (July 2026). Kept for the rationale. Two notes on
+> where the implementation refined the plan: `minTradeCents` floors
+> sell-pass moves rather than filtering emitted trades (dropping a
+> contribution-funded buy would strand cash and break the
+> contributions-are-fully-invested invariant), and the brute-force
+> optimality property asserts *exact* optimality where greedy provably
+> achieves it (single-account problems with arbitrary constraints, and
+> unconstrained multi-account problems) instead of a band-slack bound.
+
 ## Context
 
 Today the rebalancer is **buy-only**: a greedy waterfall spends new contribution
