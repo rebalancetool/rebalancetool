@@ -1,3 +1,6 @@
+import { allocate } from "./allocate.ts";
+import type { TransportationProblem } from "./allocate.ts";
+import { DEFAULT_TOLERANCE_BPS } from "./types.ts";
 import type {
   Account,
   AllocationEntry,
@@ -7,18 +10,29 @@ import type {
   RebalanceOptions,
   RebalanceResult,
   Target,
-  TaxPreference,
-  TaxType,
   Trade,
 } from "./types.ts";
 
 /**
- * ALGORITHM: buy-only greedy waterfall.
+ * ALGORITHM: greedy waterfall — a buy pass, then an optional sell pass.
  *
- * This solver only ever recommends purchases. It never sells, so it cannot
- * force a portfolio to exactly match its targets in one pass — it can only
- * spend new contribution cash to move the portfolio *toward* target. Given
- * enough contributions over time, repeated runs converge on target.
+ * By default (allowSelling: false) this solver only ever recommends
+ * purchases. It cannot then force a portfolio to exactly match its targets
+ * in one pass — it can only spend new contribution cash to move the
+ * portfolio *toward* target; given enough contributions over time, repeated
+ * runs converge. With allowSelling: true, a second pass additionally sells
+ * overweight positions to fund still-underweight classes *within the same
+ * account* (cash raised by a sell never leaves its account), never selling
+ * a class below its portfolio-level target, preferring sells in
+ * tax-advantaged accounts, and never touching taxable positions unless
+ * sellInTaxableAccounts is also set.
+ *
+ * Structurally, rebalance() reduces its inputs to a TransportationProblem in
+ * (account × asset class) space and delegates the placement decision to
+ * allocate() (see allocate.ts — the optimizer-swappable seam); steps 3-5
+ * below describe the greedy placement allocate() currently implements.
+ * rebalance() then translates the returned allocation's deltas into Trades
+ * with human-readable reasons.
  *
  * Given a Portfolio and a set of Contributions (each earmarked to one
  * account — money never moves between accounts, mirroring the real-world
@@ -40,23 +54,31 @@ import type {
  *      least one fund in that asset class, rank them by the asset class's
  *      taxPreference (e.g. bonds usually want prefer_tax_advantaged
  *      accounts first) and then by account id. Buy into the highest-ranked
- *      account, choosing the highest-ranked fund in that account's
- *      fundPreference among funds belonging to the target asset class.
+ *      account, choosing the earliest fund in that account's ordered
+ *      availableFundIds among funds belonging to the target asset class.
  *      Spend min(gap, remaining cash in that account). This is a "waterfall"
  *      because each pass drains the biggest gap first; once a gap is fully
  *      closed or every eligible account runs dry, the next-biggest gap
  *      becomes the target.
  *   4. If no eligible account exists at all for an asset class's gap (no
- *      account with remaining cash offers a fund in it), that gap is
- *      reported as unclosable for this run and a warning is emitted; the
- *      solver moves on to the next-largest gap rather than stalling.
+ *      account with remaining cash offers a fund in it), the buy pass moves
+ *      on to the next-largest gap rather than stalling. When selling is
+ *      enabled, a sell pass then retries every remaining gap: it finds an
+ *      account that can buy the underweight class and holds an overweight
+ *      one, sells the overweight position (least-preferred fund first) and
+ *      redeploys the proceeds in place. Any gap that survives both passes
+ *      is reported as a warning. Everything is governed by the tolerance
+ *      band (toleranceBps, default 50): a class within ±band of its target
+ *      weight is treated as on-target — not bought toward, not sold down,
+ *      not "fixed" by selling, and not warned about — so trivial drift never
+ *      triggers trades.
  *   5. Contributions must be fully invested — cash cannot be left
  *      sitting idle in an account. So once every gap reachable from an
  *      account's contribution has been closed (or is permanently blocked),
  *      any cash still remaining in that account is invested into that
- *      account's single top-fundPreference fund, with a warning explaining
- *      why (this can happen when a contribution is larger than needed to
- *      close that account's share of the gaps).
+ *      account's single most-preferred fund (availableFundIds[0]), with a
+ *      warning explaining why (this can happen when a contribution is larger
+ *      than needed to close that account's share of the gaps).
  *
  * Every trade carries a human-readable `reason`. All money math is done in
  * integer cents; all weights are integer basis points. Iteration never
@@ -69,14 +91,27 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   const fundsById = new Map(portfolio.funds.map((f) => [f.id, f]));
   const assetClassesById = new Map(portfolio.assetClasses.map((ac) => [ac.id, ac]));
+  const accountsById = new Map(portfolio.accounts.map((a) => [a.id, a]));
 
-  // --- Step 1: current holdings by asset class, across all accounts ---
-  const currentTotals = new Map<string, number>();
-  for (const assetClass of portfolio.assetClasses) currentTotals.set(assetClass.id, 0);
+  const allowSelling = options.allowSelling ?? false;
+  const sellInTaxableAccounts = options.sellInTaxableAccounts ?? false;
+  const toleranceBps = options.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
+  const minTradeCents = options.minTradeCents ?? 0;
+
+  // --- Step 1: current holdings per account, by asset class and by fund ---
+  const currentByAccount = new Map<string, Map<string, number>>();
+  const heldFundValues = new Map<string, Map<string, number>>();
+  for (const account of portfolio.accounts) {
+    currentByAccount.set(account.id, new Map());
+    heldFundValues.set(account.id, new Map());
+  }
   let currentPortfolioTotal = 0;
   for (const holding of portfolio.holdings) {
     const fund = fundsById.get(holding.fundId)!;
-    currentTotals.set(fund.assetClassId, (currentTotals.get(fund.assetClassId) ?? 0) + holding.value);
+    const row = currentByAccount.get(holding.accountId)!;
+    row.set(fund.assetClassId, (row.get(fund.assetClassId) ?? 0) + holding.value);
+    const fundRow = heldFundValues.get(holding.accountId)!;
+    fundRow.set(holding.fundId, (fundRow.get(holding.fundId) ?? 0) + holding.value);
     currentPortfolioTotal += holding.value;
   }
 
@@ -88,126 +123,162 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     totalContribution += contribution.amount;
   }
 
+  for (const account of portfolio.accounts) {
+    if ((accountCash.get(account.id) ?? 0) > 0 && account.availableFundIds.length === 0) {
+      throw new Error(`Account "${account.id}" received a contribution but has no availableFundIds to invest it in.`);
+    }
+  }
+
   const newTotal = currentPortfolioTotal + totalContribution;
 
-  // --- Step 2: target dollars per asset class, and initial gaps ---
-  const targetValueByAssetClass = proportionalAllocate(
+  // --- Step 2: target dollars per asset class ---
+  const demands = proportionalAllocate(
     newTotal,
     targets.map((t) => ({ key: t.assetClassId, weight: t.weight })),
   );
 
-  const gap = new Map<string, number>();
-  for (const target of targets) {
-    const targetValue = targetValueByAssetClass.get(target.assetClassId) ?? 0;
-    const currentValue = currentTotals.get(target.assetClassId) ?? 0;
-    gap.set(target.assetClassId, Math.max(0, targetValue - currentValue));
+  // --- Steps 3-5: delegate placement to the allocation seam ---
+  const problem: TransportationProblem = {
+    accounts: portfolio.accounts.map((account) => ({
+      id: account.id,
+      taxType: account.taxType,
+      fallbackAssetClassId:
+        account.availableFundIds.length > 0 ? fundsById.get(account.availableFundIds[0]!)!.assetClassId : undefined,
+    })),
+    assetClasses: portfolio.assetClasses.map((assetClass) => ({
+      id: assetClass.id,
+      taxPreference: assetClass.taxPreference ?? "neutral",
+    })),
+    cash: accountCash,
+    demands,
+    current: currentByAccount,
+    buyable: (accountId, assetClassId) => accountHasFundFor(accountsById.get(accountId)!, assetClassId, fundsById),
+    sellable: (accountId, assetClassId) => {
+      if (!allowSelling) return 0;
+      if (accountsById.get(accountId)!.taxType === "taxable" && !sellInTaxableAccounts) return 0;
+      return currentByAccount.get(accountId)!.get(assetClassId) ?? 0;
+    },
+    // ±toleranceBps of target weight, expressed in dollars of the new total.
+    toleranceCents: Math.floor((newTotal * toleranceBps) / 10000),
+    minTradeCents,
+  };
+
+  const allocation = allocate(problem);
+
+  // --- translate allocation deltas (x[a][c] - H[a][c]) into trades ---
+  const leftoverByAccount = new Map<string, { assetClassId: string; amount: number }>();
+  for (const w of allocation.warnings) {
+    if (w.kind === "leftover_cash") leftoverByAccount.set(w.accountId, w);
   }
 
-  const warnings: string[] = [];
-  const blocked = new Set<string>();
-  const tradeMap = new Map<string, Trade>();
-
-  function addTrade(accountId: string, fund: Fund, amount: number, reason: string): void {
-    if (amount <= 0) return;
-    const key = `${accountId}::${fund.id}`;
-    const existing = tradeMap.get(key);
-    if (existing) {
-      existing.amount += amount;
-      existing.reason += ` ${reason}`;
-    } else {
-      tradeMap.set(key, { accountId, fundId: fund.id, action: "buy", amount, reason });
-    }
-  }
-
-  // --- Step 3 & 4: greedy waterfall ---
-  while (true) {
-    let bestAssetClassId: string | null = null;
-    let bestGap = 0;
-    for (const [assetClassId, g] of gap) {
-      if (g <= 0 || blocked.has(assetClassId)) continue;
-      if (g > bestGap || (g === bestGap && (bestAssetClassId === null || assetClassId < bestAssetClassId))) {
-        bestGap = g;
-        bestAssetClassId = assetClassId;
-      }
-    }
-    if (bestAssetClassId === null) break;
-
-    const assetClass = assetClassesById.get(bestAssetClassId)!;
-    const eligible = portfolio.accounts
-      .filter(
-        (account) =>
-          (accountCash.get(account.id) ?? 0) > 0 && accountHasFundFor(account, bestAssetClassId!, fundsById),
-      )
-      .sort((a, b) => {
-        const rankA = taxTypeRank(assetClass.taxPreference ?? "neutral", a.taxType);
-        const rankB = taxTypeRank(assetClass.taxPreference ?? "neutral", b.taxType);
-        if (rankA !== rankB) return rankA - rankB;
-        return a.id.localeCompare(b.id);
-      });
-
-    if (eligible.length === 0) {
-      blocked.add(bestAssetClassId);
-      warnings.push(
-        `No account with remaining contribution cash offers a fund for "${assetClass.name}"; ` +
-          `${formatDollars(bestGap)} of gap will remain unclosed this run.`,
-      );
-      continue;
-    }
-
-    const account = eligible[0]!;
-    const fund = pickFund(account, bestAssetClassId, fundsById);
-    const cash = accountCash.get(account.id)!;
-    const amount = Math.min(bestGap, cash);
-
-    addTrade(
-      account.id,
-      fund,
-      amount,
-      `${assetClass.name} is ${formatDollars(bestGap)} below target; buying ${fund.ticker ?? fund.name} in ${account.name}.`,
-    );
-
-    gap.set(bestAssetClassId, bestGap - amount);
-    accountCash.set(account.id, cash - amount);
-  }
-
-  // --- Step 5: invest any leftover earmarked cash so nothing sits idle ---
-  // Iterate accounts in id order (not input array order) so warnings/trades
-  // are identical regardless of how the caller ordered portfolio.accounts.
+  const trades: Trade[] = [];
   const accountsByIdOrder = [...portfolio.accounts].sort((a, b) => a.id.localeCompare(b.id));
   for (const account of accountsByIdOrder) {
-    const remaining = accountCash.get(account.id) ?? 0;
-    if (remaining <= 0) continue;
-
-    const fallbackFundId =
-      account.fundPreference.find((id) => account.availableFundIds.includes(id)) ?? account.availableFundIds[0];
-    if (!fallbackFundId) {
-      throw new Error(`Account "${account.id}" received a contribution but has no availableFundIds to invest it in.`);
+    const row = allocation.x.get(account.id)!;
+    const currentRow = currentByAccount.get(account.id)!;
+    for (const assetClassId of [...row.keys()].sort()) {
+      const delta = (row.get(assetClassId) ?? 0) - (currentRow.get(assetClassId) ?? 0);
+      const assetClass = assetClassesById.get(assetClassId)!;
+      if (delta > 0) {
+        const fund = pickFund(account, assetClassId, fundsById);
+        const leftover = leftoverByAccount.get(account.id);
+        const leftoverPart = leftover !== undefined && leftover.assetClassId === assetClassId ? leftover.amount : 0;
+        const gapPart = delta - leftoverPart;
+        const reasons: string[] = [];
+        if (gapPart > 0) {
+          reasons.push(
+            `${assetClass.name} is below target; buying ${formatDollars(gapPart)} of ${fund.ticker ?? fund.name} in ${account.name}.`,
+          );
+        }
+        if (leftoverPart > 0) {
+          reasons.push(
+            `Investing ${formatDollars(leftoverPart)} of leftover contribution cash in ${fund.ticker ?? fund.name}, ` +
+              `the most-preferred fund of ${account.name}.`,
+          );
+        }
+        trades.push({
+          accountId: account.id,
+          fundId: fund.id,
+          action: "buy",
+          amount: delta,
+          reason: reasons.join(" "),
+        });
+      } else if (delta < 0) {
+        // Sell |delta| out of the held funds of this class, least-preferred
+        // first (funds no longer in availableFundIds count as least preferred
+        // of all).
+        const fundRow = heldFundValues.get(account.id)!;
+        const heldFunds = [...fundRow.entries()]
+          .filter(([fundId, value]) => value > 0 && fundsById.get(fundId)!.assetClassId === assetClassId)
+          .sort(([idA], [idB]) => {
+            const rankA = account.availableFundIds.indexOf(idA);
+            const rankB = account.availableFundIds.indexOf(idB);
+            const normA = rankA === -1 ? Number.MAX_SAFE_INTEGER : rankA;
+            const normB = rankB === -1 ? Number.MAX_SAFE_INTEGER : rankB;
+            if (normA !== normB) return normB - normA;
+            return idA.localeCompare(idB);
+          });
+        let remainingToSell = -delta;
+        for (const [fundId, heldValue] of heldFunds) {
+          if (remainingToSell <= 0) break;
+          const amount = Math.min(heldValue, remainingToSell);
+          const fund = fundsById.get(fundId)!;
+          trades.push({
+            accountId: account.id,
+            fundId,
+            action: "sell",
+            amount,
+            reason:
+              `${assetClass.name} is above target; selling ${formatDollars(amount)} of ` +
+              `${fund.ticker ?? fund.name} in ${account.name} to fund underweight asset classes.`,
+          });
+          remainingToSell -= amount;
+        }
+      }
     }
-    const fund = fundsById.get(fallbackFundId)!;
-
-    addTrade(
-      account.id,
-      fund,
-      remaining,
-      `Remaining reachable gaps for "${account.name}" are closed; investing leftover contribution in ` +
-        `${fund.ticker ?? fund.name}, its top fund preference.`,
-    );
-    warnings.push(
-      `Account "${account.name}" had ${formatDollars(remaining)} left after closing every reachable gap; ` +
-        `invested it in ${fund.ticker ?? fund.name} rather than leaving it uninvested.`,
-    );
-    accountCash.set(account.id, 0);
   }
-
-  const trades = [...tradeMap.values()].sort(
-    (a, b) => a.accountId.localeCompare(b.accountId) || a.fundId.localeCompare(b.fundId),
+  // Sells before buys within each account (the natural execution order).
+  trades.sort(
+    (a, b) =>
+      a.accountId.localeCompare(b.accountId) ||
+      (a.action === b.action ? 0 : a.action === "sell" ? -1 : 1) ||
+      a.fundId.localeCompare(b.fundId),
   );
 
+  const warnings = allocation.warnings.map((w) => {
+    switch (w.kind) {
+      case "unreachable_gap": {
+        const assetClass = assetClassesById.get(w.assetClassId)!;
+        if (!allowSelling) {
+          return (
+            `No account with remaining contribution cash offers a fund for "${assetClass.name}"; ` +
+            `${formatDollars(w.remainingGap)} of gap will remain unclosed this run.`
+          );
+        }
+        return (
+          `Even with selling enabled, ${formatDollars(w.remainingGap)} of the gap for "${assetClass.name}" ` +
+          `cannot be closed: no account that offers a fund for it holds enough sellable overweight positions` +
+          (sellInTaxableAccounts ? "." : " (selling in taxable accounts is disabled).")
+        );
+      }
+      case "leftover_cash": {
+        const account = accountsById.get(w.accountId)!;
+        const fund = fundsById.get(account.availableFundIds[0]!)!;
+        return (
+          `Account "${account.name}" had ${formatDollars(w.amount)} left after closing every reachable gap; ` +
+          `invested it in ${fund.ticker ?? fund.name} rather than leaving it uninvested.`
+        );
+      }
+    }
+  });
+
   // --- resulting allocation & deviation, post-trade ---
-  const resultingTotals = new Map(currentTotals);
-  for (const trade of trades) {
-    const fund = fundsById.get(trade.fundId)!;
-    resultingTotals.set(fund.assetClassId, (resultingTotals.get(fund.assetClassId) ?? 0) + trade.amount);
+  const resultingTotals = new Map<string, number>();
+  for (const assetClass of portfolio.assetClasses) resultingTotals.set(assetClass.id, 0);
+  for (const row of allocation.x.values()) {
+    for (const [assetClassId, value] of row) {
+      resultingTotals.set(assetClassId, (resultingTotals.get(assetClassId) ?? 0) + value);
+    }
   }
 
   const resultingWeightByAssetClass = proportionalAllocate(
@@ -278,34 +349,13 @@ function accountHasFundFor(account: Account, assetClassId: string, fundsById: Ma
   return account.availableFundIds.some((id) => fundsById.get(id)?.assetClassId === assetClassId);
 }
 
-/** Highest-ranked fund in `account.fundPreference` among its available funds for `assetClassId`. */
+/** Earliest fund in the account's ordered `availableFundIds` belonging to `assetClassId`. */
 function pickFund(account: Account, assetClassId: string, fundsById: Map<string, Fund>): Fund {
-  const candidates = account.availableFundIds
-    .map((id) => fundsById.get(id))
-    .filter((f): f is Fund => f !== undefined && f.assetClassId === assetClassId);
-
-  candidates.sort((a, b) => {
-    const rankA = account.fundPreference.indexOf(a.id);
-    const rankB = account.fundPreference.indexOf(b.id);
-    const normA = rankA === -1 ? Number.MAX_SAFE_INTEGER : rankA;
-    const normB = rankB === -1 ? Number.MAX_SAFE_INTEGER : rankB;
-    if (normA !== normB) return normA - normB;
-    return a.id.localeCompare(b.id);
-  });
-
-  const best = candidates[0];
-  if (!best) {
-    throw new Error(`Account "${account.id}" has no available fund for asset class "${assetClassId}".`);
+  for (const id of account.availableFundIds) {
+    const fund = fundsById.get(id);
+    if (fund !== undefined && fund.assetClassId === assetClassId) return fund;
   }
-  return best;
-}
-
-/** Lower rank = more preferred account for this asset class's tax preference. */
-function taxTypeRank(preference: TaxPreference, taxType: TaxType): number {
-  if (preference === "neutral") return 0;
-  const isTaxAdvantaged = taxType === "tax_deferred" || taxType === "tax_free";
-  if (preference === "prefer_tax_advantaged") return isTaxAdvantaged ? 0 : 1;
-  return taxType === "taxable" ? 0 : 1; // prefer_taxable
+  throw new Error(`Account "${account.id}" has no available fund for asset class "${assetClassId}".`);
 }
 
 function formatDollars(cents: number): string {
@@ -331,11 +381,6 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     for (const fundId of account.availableFundIds) {
       if (!fundIds.has(fundId)) {
         throw new Error(`Account "${account.id}" availableFundIds references unknown fund "${fundId}".`);
-      }
-    }
-    for (const fundId of account.fundPreference) {
-      if (!fundIds.has(fundId)) {
-        throw new Error(`Account "${account.id}" fundPreference references unknown fund "${fundId}".`);
       }
     }
   }
@@ -377,6 +422,17 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     }
     if (!Number.isInteger(contribution.amount) || contribution.amount < 0) {
       throw new Error(`Contribution amount must be a non-negative integer number of cents, got ${contribution.amount}.`);
+    }
+  }
+
+  if (options.toleranceBps !== undefined) {
+    if (!Number.isInteger(options.toleranceBps) || options.toleranceBps < 0 || options.toleranceBps > 10000) {
+      throw new Error(`toleranceBps must be an integer between 0 and 10000, got ${options.toleranceBps}.`);
+    }
+  }
+  if (options.minTradeCents !== undefined) {
+    if (!Number.isInteger(options.minTradeCents) || options.minTradeCents < 0) {
+      throw new Error(`minTradeCents must be a non-negative integer number of cents, got ${options.minTradeCents}.`);
     }
   }
 }
