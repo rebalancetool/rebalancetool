@@ -1,10 +1,11 @@
 import { rebalance } from "@rebalancer/solver";
 import type { RebalanceResult, Scenario } from "@rebalancer/solver";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { demoScenario } from "./demo-scenario.ts";
 import { PortfolioEditor } from "./PortfolioEditor.tsx";
 import { ResultView } from "./ResultView.tsx";
 import { emptyScenario } from "./scenario-edit.ts";
+import { scenarioFromJson, scenarioToJson } from "./scenario-file.ts";
 import { ContributionsEditor, OptionsEditor, TargetsEditor } from "./ScenarioEditor.tsx";
 
 type Outcome = { result: RebalanceResult; error?: undefined } | { result?: undefined; error: string };
@@ -23,9 +24,31 @@ function solve(scenario: Scenario): Outcome {
   }
 }
 
+/** Hand the browser a file to save. DOM-only glue; the content comes from scenario-file.ts. */
+function downloadScenario(scenario: Scenario): void {
+  const url = URL.createObjectURL(new Blob([scenarioToJson(scenario)], { type: "application/json" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "rebalancer-scenario.json";
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function App() {
   const [scenario, setScenario] = useState<Scenario>(demoScenario);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const outcome = useMemo(() => solve(scenario), [scenario]);
+
+  const onFileChosen = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      setScenario(scenarioFromJson(await file.text()));
+      setFileError(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   return (
     <main className="app">
@@ -38,6 +61,23 @@ export function App() {
           </p>
         </div>
         <div className="header-actions">
+          <button type="button" onClick={() => downloadScenario(scenario)}>
+            Download JSON
+          </button>
+          <button type="button" onClick={() => fileInput.current?.click()}>
+            Load JSON…
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            aria-label="Load scenario JSON file"
+            className="visually-hidden"
+            onChange={(event) => {
+              void onFileChosen(event.target.files?.[0]);
+              event.target.value = ""; // so picking the same file again re-fires
+            }}
+          />
           <button type="button" onClick={() => setScenario(demoScenario)}>
             Load example
           </button>
@@ -46,6 +86,13 @@ export function App() {
           </button>
         </div>
       </header>
+
+      {fileError && (
+        <div className="card solve-error" role="alert">
+          <h3>Couldn’t load that file</h3>
+          <p>{fileError}</p>
+        </div>
+      )}
 
       <PortfolioEditor scenario={scenario} onChange={setScenario} />
 

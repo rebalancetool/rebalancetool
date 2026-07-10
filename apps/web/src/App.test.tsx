@@ -75,6 +75,43 @@ test("a portfolio built from scratch in the UI produces trades", async () => {
   expect(within(trades).getByRole("heading", { name: /My IRA/ })).toBeInTheDocument();
 });
 
+test("uploading a scenario JSON file replaces the state", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  const uploaded = {
+    portfolio: {
+      assetClasses: [{ id: "stocks", name: "Stocks" }],
+      funds: [{ id: "swtsx", ticker: "SWTSX", name: "Schwab Total Stock Market", assetClassId: "stocks" }],
+      accounts: [
+        { id: "solo401k", name: "Solo 401(k)", taxType: "tax_deferred" as const, availableFundIds: ["swtsx"] },
+      ],
+      holdings: [{ accountId: "solo401k", fundId: "swtsx", value: 100000 }],
+    },
+    targets: [{ assetClassId: "stocks", weight: 10000 }],
+    contributions: [{ accountId: "solo401k", amount: 5000 }],
+  };
+  const file = new File([JSON.stringify(uploaded)], "scenario.json", { type: "application/json" });
+  await user.upload(screen.getByLabelText("Load scenario JSON file"), file);
+
+  expect(await screen.findByLabelText("Account name (solo401k)")).toHaveValue("Solo 401(k)");
+  const trades = screen.getByRole("region", { name: "Trades" });
+  expect(within(trades).getByText("$50.00")).toBeInTheDocument();
+});
+
+test("uploading a broken file shows an error and keeps the current scenario", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  const file = new File(["{ not json"], "broken.json", { type: "application/json" });
+  await user.upload(screen.getByLabelText("Load scenario JSON file"), file);
+
+  expect(await screen.findByText("Couldn’t load that file")).toBeInTheDocument();
+  expect(screen.getByText("That file isn't valid JSON.")).toBeInTheDocument();
+  // The demo scenario is still on screen.
+  expect(screen.getByLabelText("Target weight for US Stocks")).toBeInTheDocument();
+});
+
 test("allow selling produces sell trades for the drifted demo portfolio", async () => {
   const user = userEvent.setup();
   render(<App />);
