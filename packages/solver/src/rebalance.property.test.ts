@@ -1,17 +1,11 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { rebalance } from "./rebalance.ts";
-import type { Account, AssetClass, Contribution, Fund, Holding, Portfolio, Target } from "./types.ts";
+import { validateScenario } from "./scenario.ts";
+import type { Contribution, Portfolio, Target } from "./types.ts";
 import exampleFixtureRaw from "../fixtures/example.json" with { type: "json" };
 
-interface ExampleFixture {
-  assetClasses: AssetClass[];
-  funds: Fund[];
-  accounts: Account[];
-  holdings: Holding[];
-}
-
-const fixture = exampleFixtureRaw as unknown as ExampleFixture;
+const fixture: Portfolio = validateScenario(exampleFixtureRaw).portfolio;
 const assetClassIds = fixture.assetClasses.map((a) => a.id);
 const accountIds = fixture.accounts.map((a) => a.id);
 

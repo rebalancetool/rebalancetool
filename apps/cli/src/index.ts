@@ -6,10 +6,7 @@ import { rebalance } from "@rebalancer/solver";
 import type { Contribution, Portfolio, Target } from "@rebalancer/solver";
 
 interface ScenarioFile {
-  assetClasses: Portfolio["assetClasses"];
-  funds: Portfolio["funds"];
-  accounts: Portfolio["accounts"];
-  holdings: Portfolio["holdings"];
+  portfolio: Portfolio;
   targets: Target[];
 }
 
@@ -47,12 +44,7 @@ function main(): void {
   const scenarioPath = resolve(process.cwd(), values.portfolio);
   const scenario = JSON.parse(readFileSync(scenarioPath, "utf8")) as ScenarioFile;
 
-  const portfolio: Portfolio = {
-    assetClasses: scenario.assetClasses,
-    funds: scenario.funds,
-    accounts: scenario.accounts,
-    holdings: scenario.holdings,
-  };
+  const portfolio: Portfolio = scenario.portfolio;
   const contributions = (values.contribution ?? []).map(parseContributionArg);
 
   const result = rebalance(portfolio, scenario.targets, { contributions });

@@ -123,6 +123,19 @@ export interface RebalanceOptions {
   minTradeCents?: number;
 }
 
+/**
+ * The complete, canonical input document: everything rebalance() needs, in
+ * one JSON-serializable shape. The CLI reads exactly this from disk, and a
+ * future UI can save/load the same document. Parse untrusted JSON with
+ * validateScenario() to get one of these.
+ */
+export interface Scenario {
+  portfolio: Portfolio;
+  targets: Target[];
+  contributions: Contribution[];
+  options?: Omit<RebalanceOptions, "contributions">;
+}
+
 export interface AllocationEntry {
   assetClassId: string;
   /** Integer cents, summed across all accounts. */

@@ -1,27 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { rebalance } from "./rebalance.ts";
-import type { Account, AssetClass, Contribution, Fund, Holding, Portfolio, Target } from "./types.ts";
+import { validateScenario } from "./scenario.ts";
+import type { Portfolio, Scenario, Target } from "./types.ts";
 import exampleFixtureRaw from "../fixtures/example.json" with { type: "json" };
 import sellRequiredFixtureRaw from "../fixtures/sell-required.json" with { type: "json" };
 
-interface ExampleFixture {
-  assetClasses: AssetClass[];
-  funds: Fund[];
-  accounts: Account[];
-  holdings: Holding[];
-  targets: Target[];
-  contributions: Contribution[];
-}
+// Running the fixtures through validateScenario doubles as a smoke test
+// that the checked-in documents match the canonical Scenario shape.
+const exampleFixture: Scenario = validateScenario(exampleFixtureRaw);
+const sellRequiredFixture: Scenario = validateScenario(sellRequiredFixtureRaw);
 
-// The JSON import widens string-literal fields (e.g. taxType) to `string`;
-// this fixture is trusted, hand-authored test data, so a single cast at the
-// boundary is fine.
-const exampleFixture = exampleFixtureRaw as unknown as ExampleFixture;
-const sellRequiredFixture = sellRequiredFixtureRaw as unknown as ExampleFixture;
-
-function loadFixture(fixture: ExampleFixture) {
-  const { assetClasses, funds, accounts, holdings, targets, contributions } = fixture;
-  const portfolio: Portfolio = { assetClasses, funds, accounts, holdings };
+function loadFixture(fixture: Scenario) {
+  const { portfolio, targets, contributions } = fixture;
   return { portfolio, targets, contributions };
 }
 
