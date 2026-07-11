@@ -137,14 +137,27 @@ describe("rebalance - properties (fast-check)", () => {
         const soldClasses = new Set(
           result.trades.filter((t) => t.action === "sell").map((t) => fundsById.get(t.fundId)!.assetClassId),
         );
+        const currentByClass = new Map<string, number>();
+        for (const holding of portfolio.holdings) {
+          const classId = fundsById.get(holding.fundId)!.assetClassId;
+          currentByClass.set(classId, (currentByClass.get(classId) ?? 0) + holding.value);
+        }
         for (const target of targets) {
           if (!soldClasses.has(target.assetClassId)) continue;
           const resulting = result.resultingAllocation.find((a) => a.assetClassId === target.assetClassId)!;
+          // A class with sell trades may legitimately end below target when it
+          // *started* below target: the lp engine can relocate it between
+          // accounts (sell here, buy back there) to free a restricted fund
+          // menu for another class, leaving its own total unchanged. What
+          // selling must never do is *push* a class's total below target, so
+          // the floor is min(current, target), not target itself.
+          const targetDollars = Math.floor((newTotal * target.weight) / 10000);
+          const floor = Math.min(currentByClass.get(target.assetClassId) ?? 0, targetDollars);
           // Target dollars round to within one cent of the exact proportion,
           // and the lp optimizer's float→integer repair can shift a class
           // total by strictly less than one cent per account.
           const slack = 1 + fixture.accounts.length;
-          expect(resulting.value).toBeGreaterThanOrEqual(Math.floor((newTotal * target.weight) / 10000) - slack);
+          expect(resulting.value).toBeGreaterThanOrEqual(floor - slack);
         }
       }),
     );
