@@ -32,16 +32,23 @@ test("breaking the targets total replaces results with an error, fixing it bring
   expect(screen.getByRole("region", { name: "Trades" })).toBeInTheDocument();
 });
 
-test("typing a contribution feeds the solver and shows up in the account breakdown", async () => {
+test("a contribution row added from the picker feeds the solver; its ✕ clears it", async () => {
   const user = userEvent.setup();
   render(<App />);
 
+  // Roth IRA has no contribution in the demo, so the row starts hidden.
+  expect(screen.queryByLabelText("Cash to invest in Roth IRA")).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Add to Roth IRA"), "__cash__");
+
   const rothContribution = screen.getByLabelText("Cash to invest in Roth IRA");
-  await user.clear(rothContribution);
   await user.type(rothContribution, "1000");
 
-  const accounts = screen.getByRole("region", { name: "Accounts" });
-  expect(within(accounts).getByText(/\+\$1,000\.00 cash in/)).toBeInTheDocument();
+  const accounts = () => screen.getByRole("region", { name: "Accounts" });
+  expect(within(accounts()).getByText(/\+\$1,000\.00 cash in/)).toBeInTheDocument();
+
+  await user.click(screen.getByLabelText("Remove cash to invest from Roth IRA"));
+  expect(screen.queryByLabelText("Cash to invest in Roth IRA")).not.toBeInTheDocument();
+  expect(within(accounts()).queryByText(/\+\$1,000\.00 cash in/)).not.toBeInTheDocument();
 });
 
 test("a portfolio built from scratch in the UI produces trades", async () => {
@@ -62,11 +69,12 @@ test("a portfolio built from scratch in the UI produces trades", async () => {
   await user.selectOptions(screen.getByLabelText("Tax type for new account"), "tax_deferred");
   await user.click(screen.getByRole("button", { name: "Add account" }));
 
-  await user.selectOptions(screen.getByLabelText("Add fund to My IRA"), "vti");
+  await user.selectOptions(screen.getByLabelText("Add to My IRA"), "vti");
   await user.type(screen.getByLabelText("Current value of VTI in My IRA"), "900");
 
-  // Plan: 100% US Stocks, $100 contribution.
+  // Plan: 100% US Stocks, $100 contribution (added via the same picker).
   await user.type(screen.getByLabelText("Target weight for US Stocks"), "100");
+  await user.selectOptions(screen.getByLabelText("Add to My IRA"), "__cash__");
   await user.type(screen.getByLabelText("Cash to invest in My IRA"), "100");
 
   const trades = screen.getByRole("region", { name: "Trades" });
@@ -117,7 +125,7 @@ test("removing a fund from an account clears its menu entry and holding, and it 
   render(<App />);
 
   // VXUS is in the taxable account's menu (so not in its add picker) and holds $8,000.
-  const addPicker = () => screen.getByLabelText("Add fund to Taxable Brokerage");
+  const addPicker = () => screen.getByLabelText("Add to Taxable Brokerage");
   expect(within(addPicker()).queryByRole("option", { name: /VXUS/ })).not.toBeInTheDocument();
 
   await user.click(screen.getByLabelText("Remove VXUS from Taxable Brokerage"));

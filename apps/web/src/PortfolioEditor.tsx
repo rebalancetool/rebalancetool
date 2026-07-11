@@ -250,8 +250,13 @@ function FundsCard({ scenario, onChange }: EditorProps) {
 }
 
 function AccountCard({ scenario, onChange, accountId }: EditorProps & { accountId: string }) {
+  // Whether the (zero-amount) contribution row is shown even though the
+  // scenario has no entry for it — set by the add picker, cleared by its ✕.
+  const [contributionOpen, setContributionOpen] = useState(false);
   const account = scenario.portfolio.accounts.find((a) => a.id === accountId);
   if (!account) return null;
+  const contribution = scenario.contributions.find((c) => c.accountId === account.id)?.amount ?? 0;
+  const showContribution = contributionOpen || contribution !== 0;
   return (
     <div className="card editor-card account-card">
       <div className="account-card-header">
@@ -282,29 +287,61 @@ function AccountCard({ scenario, onChange, accountId }: EditorProps & { accountI
           ✕
         </button>
       </div>
-      <AccountFundList scenario={scenario} onChange={onChange} accountId={accountId} />
-      <div className="contribution-row">
-        <span className="field-label">
-          Cash to invest
-          <span className="editor-hint">New contribution earmarked to this account — it can't move to another.</span>
-        </span>
-        <MoneyInput
-          cents={scenario.contributions.find((c) => c.accountId === account.id)?.amount ?? 0}
-          onCents={(amount) => onChange(withContribution(scenario, account.id, amount))}
-          label={`Cash to invest in ${account.name}`}
-        />
-      </div>
+      <AccountFundList
+        scenario={scenario}
+        onChange={onChange}
+        accountId={accountId}
+        onAddContribution={showContribution ? undefined : () => setContributionOpen(true)}
+      />
+      {showContribution && (
+        // Focusing the input pins the row open, so clearing the amount while
+        // editing doesn't unmount the field mid-keystroke.
+        <div className="contribution-row" onFocusCapture={() => setContributionOpen(true)}>
+          <span className="field-label">
+            Cash to invest
+            <span className="editor-hint">New contribution earmarked to this account</span>
+          </span>
+          <span className="fund-value-cell">
+            <MoneyInput
+              cents={contribution}
+              onCents={(amount) => onChange(withContribution(scenario, account.id, amount))}
+              label={`Cash to invest in ${account.name}`}
+            />
+          </span>
+          <button
+            type="button"
+            className="remove-button"
+            aria-label={`Remove cash to invest from ${account.name}`}
+            title="Clears this account's contribution"
+            onClick={() => {
+              setContributionOpen(false);
+              onChange(withContribution(scenario, account.id, 0));
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
+/** Sentinel picker value for adding a contribution row — fund ids are slugs, so this can't collide. */
+const ADD_CASH = "__cash__";
+
 /**
  * The funds actually in an account: its buyable menu in preference order,
  * then anything held-but-no-longer-buyable. New funds join via the picker
- * at the bottom (fed from the Funds card); ✕ takes the fund out of the
- * account entirely (menu and holding).
+ * at the bottom (fed from the Funds card), which also offers a "cash to
+ * invest" row when `onAddContribution` is provided; ✕ takes the fund out
+ * of the account entirely (menu and holding).
  */
-function AccountFundList({ scenario, onChange, accountId }: EditorProps & { accountId: string }) {
+function AccountFundList({
+  scenario,
+  onChange,
+  accountId,
+  onAddContribution,
+}: EditorProps & { accountId: string; onAddContribution?: () => void }) {
   const account = scenario.portfolio.accounts.find((a) => a.id === accountId);
   if (!account) return null;
   const { funds, holdings } = scenario.portfolio;
@@ -404,22 +441,28 @@ function AccountFundList({ scenario, onChange, accountId }: EditorProps & { acco
           )}
         </div>
       )}
-      {addable.length > 0 && (
+      {(addable.length > 0 || onAddContribution) && (
         <div className="add-fund-row">
           <select
-            aria-label={`Add fund to ${account.name}`}
+            aria-label={`Add to ${account.name}`}
             value=""
             onChange={(event) => {
-              if (event.target.value) onChange(setFundAvailability(scenario, account.id, event.target.value, true));
+              if (event.target.value === ADD_CASH) onAddContribution?.();
+              else if (event.target.value) {
+                onChange(setFundAvailability(scenario, account.id, event.target.value, true));
+              }
             }}
           >
-            <option value="">＋ Add fund…</option>
+            <option value="">
+              {addable.length === 0 ? "＋ Add cash…" : onAddContribution ? "＋ Add fund or cash…" : "＋ Add fund…"}
+            </option>
             {addable.map((fund) => (
               <option key={fund.id} value={fund.id}>
                 {fund.ticker || fund.name || fund.id}
                 {fund.name && fund.ticker ? ` — ${fund.name}` : ""}
               </option>
             ))}
+            {onAddContribution && <option value={ADD_CASH}>Cash to invest (new contribution)</option>}
           </select>
         </div>
       )}
