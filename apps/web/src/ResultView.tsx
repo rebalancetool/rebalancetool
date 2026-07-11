@@ -1,5 +1,6 @@
+import { DEFAULT_TOLERANCE_BPS } from "@rebalancer/solver";
 import type { RebalanceResult, Scenario, TaxType, Trade } from "@rebalancer/solver";
-import { formatCents, formatDelta, formatSignedBpsAsPercent } from "./format.ts";
+import { formatBpsAsPercent, formatCents, formatDelta, formatSignedBpsAsPercent } from "./format.ts";
 
 /**
  * Renders a RebalanceResult. Pure presentation: every number displayed here
@@ -61,18 +62,53 @@ function groupTradesByAccount(trades: Trade[]): { accountId: string; trades: Tra
   return groups;
 }
 
-function TradesSection({ result, lookups }: { result: RebalanceResult; lookups: Lookups }) {
+/**
+ * Settings that differ from what the page presents as normal (selling on,
+ * default tolerance, no trade floor, LP engine), summarized so tucked-away
+ * settings can never invisibly shape the results. The taxable-sell guard
+ * isn't listed: its checkbox is always visible at the top of the page.
+ */
+function describeNonDefaultOptions(options: Scenario["options"]): string | null {
+  const notes: string[] = [];
+  if (!(options?.allowSelling ?? false)) notes.push("selling off");
+  const tolerance = options?.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
+  if (tolerance !== DEFAULT_TOLERANCE_BPS) notes.push(`tolerance ±${formatBpsAsPercent(tolerance)}`);
+  const minTrade = options?.minTradeCents ?? 0;
+  if (minTrade > 0) notes.push(`min trade ${formatCents(minTrade)}`);
+  if (options?.optimizer === "greedy") notes.push("greedy engine");
+  return notes.length > 0 ? notes.join(" · ") : null;
+}
+
+/** The note sits beside the h2, not inside it, so the section's accessible name stays "Trades". */
+function TradesHeading({ optionsNote }: { optionsNote: string | null }) {
+  return (
+    <div className="heading-row">
+      <h2 id="trades-heading">Trades</h2>
+      {optionsNote && <span className="options-note">{optionsNote}</span>}
+    </div>
+  );
+}
+
+function TradesSection({
+  result,
+  lookups,
+  optionsNote,
+}: {
+  result: RebalanceResult;
+  lookups: Lookups;
+  optionsNote: string | null;
+}) {
   if (result.trades.length === 0) {
     return (
       <section aria-labelledby="trades-heading">
-        <h2 id="trades-heading">Trades</h2>
+        <TradesHeading optionsNote={optionsNote} />
         <p className="empty-note">No trades needed — every asset class is within its tolerance band.</p>
       </section>
     );
   }
   return (
     <section aria-labelledby="trades-heading">
-      <h2 id="trades-heading">Trades</h2>
+      <TradesHeading optionsNote={optionsNote} />
       {groupTradesByAccount(result.trades).map((group) => (
         <div className="card" key={group.accountId}>
           <AccountHeading
@@ -206,7 +242,7 @@ export function ResultView({ scenario, result }: { scenario: Scenario; result: R
           </ul>
         </div>
       )}
-      <TradesSection result={result} lookups={lookups} />
+      <TradesSection result={result} lookups={lookups} optionsNote={describeNonDefaultOptions(scenario.options)} />
       <AllocationSection result={result} lookups={lookups} />
       <AccountsSection result={result} lookups={lookups} />
     </div>

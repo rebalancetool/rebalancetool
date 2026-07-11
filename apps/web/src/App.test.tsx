@@ -20,7 +20,7 @@ test("breaking the targets total replaces results with an error, fixing it bring
   await user.type(usStocks, "50");
 
   // 50 + 20 + 20 + 10 + 10 = 110% — the indicator and the solver both object.
-  expect(screen.getByRole("status")).toHaveTextContent("110% — must total 100%");
+  expect(screen.getByText(/must total 100%/)).toHaveTextContent("110% — must total 100%");
   const alert = screen.getByRole("alert");
   expect(alert).toHaveTextContent("Can’t rebalance yet");
   expect(screen.queryByRole("region", { name: "Trades" })).not.toBeInTheDocument();
@@ -32,16 +32,23 @@ test("breaking the targets total replaces results with an error, fixing it bring
   expect(screen.getByRole("region", { name: "Trades" })).toBeInTheDocument();
 });
 
-test("typing a contribution feeds the solver and shows up in the account breakdown", async () => {
+test("a contribution row added from the picker feeds the solver; its ✕ clears it", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  const rothContribution = screen.getByLabelText("Contribution to Roth IRA");
-  await user.clear(rothContribution);
+  // Roth IRA has no contribution in the demo, so the row starts hidden.
+  expect(screen.queryByLabelText("Cash to invest in Roth IRA")).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Add to Roth IRA"), "__cash__");
+
+  const rothContribution = screen.getByLabelText("Cash to invest in Roth IRA");
   await user.type(rothContribution, "1000");
 
-  const accounts = screen.getByRole("region", { name: "Accounts" });
-  expect(within(accounts).getByText(/\+\$1,000\.00 cash in/)).toBeInTheDocument();
+  const accounts = () => screen.getByRole("region", { name: "Accounts" });
+  expect(within(accounts()).getByText(/\+\$1,000\.00 cash in/)).toBeInTheDocument();
+
+  await user.click(screen.getByLabelText("Remove cash to invest from Roth IRA"));
+  expect(screen.queryByLabelText("Cash to invest in Roth IRA")).not.toBeInTheDocument();
+  expect(within(accounts()).queryByText(/\+\$1,000\.00 cash in/)).not.toBeInTheDocument();
 });
 
 test("a portfolio built from scratch in the UI produces trades", async () => {
@@ -62,12 +69,13 @@ test("a portfolio built from scratch in the UI produces trades", async () => {
   await user.selectOptions(screen.getByLabelText("Tax type for new account"), "tax_deferred");
   await user.click(screen.getByRole("button", { name: "Add account" }));
 
-  await user.click(screen.getByLabelText("VTI buyable in My IRA"));
+  await user.selectOptions(screen.getByLabelText("Add to My IRA"), "vti");
   await user.type(screen.getByLabelText("Current value of VTI in My IRA"), "900");
 
-  // Plan: 100% US Stocks, $100 contribution.
+  // Plan: 100% US Stocks, $100 contribution (added via the same picker).
   await user.type(screen.getByLabelText("Target weight for US Stocks"), "100");
-  await user.type(screen.getByLabelText("Contribution to My IRA"), "100");
+  await user.selectOptions(screen.getByLabelText("Add to My IRA"), "__cash__");
+  await user.type(screen.getByLabelText("Cash to invest in My IRA"), "100");
 
   const trades = screen.getByRole("region", { name: "Trades" });
   expect(within(trades).getByText("BUY")).toBeInTheDocument();
@@ -112,13 +120,65 @@ test("uploading a broken file shows an error and keeps the current scenario", as
   expect(screen.getByLabelText("Target weight for US Stocks")).toBeInTheDocument();
 });
 
-test("allow selling produces sell trades for the drifted demo portfolio", async () => {
+test("removing a fund from an account clears its menu entry and holding, and it becomes addable again", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  // VXUS is in the taxable account's menu (so not in its add picker) and holds $8,000.
+  const addPicker = () => screen.getByLabelText("Add to Taxable Brokerage");
+  expect(within(addPicker()).queryByRole("option", { name: /VXUS/ })).not.toBeInTheDocument();
+
+  await user.click(screen.getByLabelText("Remove VXUS from Taxable Brokerage"));
+
+  expect(screen.queryByLabelText("Current value of VXUS in Taxable Brokerage")).not.toBeInTheDocument();
+  expect(within(addPicker()).getByRole("option", { name: /VXUS/ })).toBeInTheDocument();
+  // The holding is gone too: International Stocks now has no current value anywhere.
+  const allocation = screen.getByRole("region", { name: "Portfolio by asset class" });
+  const intlRow = within(allocation).getByRole("row", { name: /International Stocks/ });
+  expect(within(intlRow).getAllByText("$0.00").length).toBeGreaterThan(0);
+});
+
+test("fund preference order can be changed from the drag handle's keyboard mode", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  // Taxable Brokerage menu is VTI #1, VXUS #2.
+  const handle = screen.getByLabelText("Reorder VXUS in Taxable Brokerage (position 2)");
+  handle.focus();
+  await user.keyboard(" "); // lift
+  await user.keyboard("{ArrowUp}");
+  await user.keyboard(" "); // drop
+
+  expect(screen.getByLabelText("Reorder VXUS in Taxable Brokerage (position 1)")).toBeInTheDocument();
+  expect(screen.getByLabelText("Reorder VTI in Taxable Brokerage (position 2)")).toBeInTheDocument();
+});
+
+test("selling is on by default; turning it off in Settings removes sells and flags it", async () => {
   const user = userEvent.setup();
   render(<App />);
 
   const trades = () => screen.getByRole("region", { name: "Trades" });
-  expect(within(trades()).queryAllByText("SELL")).toHaveLength(0);
-
-  await user.click(screen.getByLabelText(/Allow selling/));
   expect(within(trades()).getAllByText("SELL").length).toBeGreaterThan(0);
+
+  await user.click(screen.getByRole("button", { name: /Settings/ }));
+  await user.click(screen.getByLabelText("Allow selling"));
+
+  expect(within(trades()).queryAllByText("SELL")).toHaveLength(0);
+  // Tucked-away settings must never invisibly shape results.
+  expect(within(trades()).getByText(/selling off/)).toBeInTheDocument();
+});
+
+test("taxable sells are on by default; unchecking the checkbox protects taxable accounts", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  const trades = () => screen.getByRole("region", { name: "Trades" });
+  const taxableTradeCard = () =>
+    within(trades()).queryByRole("heading", { name: /Taxable Brokerage/ })?.closest(".card") as HTMLElement | null;
+  // The drifted demo portfolio uses a taxable sell out of the box.
+  expect(within(taxableTradeCard()!).getAllByText("SELL").length).toBeGreaterThan(0);
+
+  await user.click(screen.getByLabelText("Allow selling in taxable accounts"));
+
+  expect(taxableTradeCard() === null || within(taxableTradeCard()!).queryAllByText("SELL").length === 0).toBe(true);
 });

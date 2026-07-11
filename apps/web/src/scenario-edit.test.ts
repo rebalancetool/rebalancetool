@@ -6,10 +6,10 @@ import {
   addAssetClass,
   addFund,
   emptyScenario,
-  moveFundPreference,
   removeAccount,
   removeAssetClass,
   removeFund,
+  reorderFundPreference,
   setFundAvailability,
   targetWeightTotal,
   updateAssetClass,
@@ -111,24 +111,31 @@ test("removeFund and removeAccount cascade their references", () => {
   expect(noAccount.contributions).toEqual([]);
 });
 
-test("setFundAvailability appends least-preferred and moveFundPreference reorders", () => {
+test("setFundAvailability appends least-preferred and reorderFundPreference moves to an index", () => {
   let s = emptyScenario();
   s = addAssetClass(s, "Stocks");
   s = addFund(s, "VTI", "stocks");
   s = addFund(s, "VOO", "stocks");
+  s = addFund(s, "VB", "stocks");
   s = addAccount(s, "IRA", "tax_deferred");
   s = setFundAvailability(s, "ira", "vti", true);
   s = setFundAvailability(s, "ira", "voo", true);
-  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["vti", "voo"]);
+  s = setFundAvailability(s, "ira", "vb", true);
+  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["vti", "voo", "vb"]);
 
-  s = moveFundPreference(s, "ira", "voo", -1);
-  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["voo", "vti"]);
-  // Already at the top: no-op.
-  s = moveFundPreference(s, "ira", "voo", -1);
-  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["voo", "vti"]);
+  s = reorderFundPreference(s, "ira", "vb", 0);
+  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["vb", "vti", "voo"]);
+
+  s = reorderFundPreference(s, "ira", "vb", 1);
+  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["vti", "vb", "voo"]);
+
+  // Out-of-range targets clamp; unknown funds are a no-op.
+  s = reorderFundPreference(s, "ira", "vti", 99);
+  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["vb", "voo", "vti"]);
+  expect(reorderFundPreference(s, "ira", "zzz", 0)).toEqual(s);
 
   s = setFundAvailability(s, "ira", "voo", false);
-  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["vti"]);
+  expect(s.portfolio.accounts[0]!.availableFundIds).toEqual(["vb", "vti"]);
 });
 
 test("updateAssetClass and updateFund patch in place without changing ids", () => {

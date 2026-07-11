@@ -1,19 +1,41 @@
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { TOTAL_BPS } from "@rebalancer/solver";
 import type { Scenario, TaxPreference, TaxType } from "@rebalancer/solver";
 import { useState } from "react";
-import { MoneyInput } from "./inputs.tsx";
+import { formatBpsAsPercent } from "./format.ts";
+import { MoneyInput, PercentInput } from "./inputs.tsx";
 import {
   addAccount,
   addAssetClass,
   addFund,
-  moveFundPreference,
   removeAccount,
   removeAssetClass,
   removeFund,
+  reorderFundPreference,
   setFundAvailability,
+  targetWeightTotal,
   updateAccount,
   updateAssetClass,
   updateFund,
+  withContribution,
   withHolding,
+  withTargetWeight,
 } from "./scenario-edit.ts";
 
 /**
@@ -83,12 +105,22 @@ function AddRow({
 }
 
 function AssetClassesCard({ scenario, onChange }: EditorProps) {
+  const total = targetWeightTotal(scenario);
+  const weightByClassId = new Map(scenario.targets.map((t) => [t.assetClassId, t.weight]));
   return (
     <div className="card editor-card">
       <h3>Asset classes</h3>
-      <p className="editor-hint">The categories you allocate across. Each fund belongs to one.</p>
+      <p className="editor-hint">
+        The categories you allocate across, each with its target share of the whole portfolio.
+      </p>
+      <div className="class-row class-row-header" aria-hidden="true">
+        <span>Name</span>
+        <span>Tax location</span>
+        <span className="class-target-heading">Target</span>
+        <span />
+      </div>
       {scenario.portfolio.assetClasses.map((assetClass) => (
-        <div className="field-row" key={assetClass.id}>
+        <div className="class-row" key={assetClass.id}>
           <input
             type="text"
             aria-label={`Asset class name (${assetClass.id})`}
@@ -110,6 +142,11 @@ function AssetClassesCard({ scenario, onChange }: EditorProps) {
               </option>
             ))}
           </select>
+          <PercentInput
+            bps={weightByClassId.get(assetClass.id) ?? 0}
+            onBps={(weight) => onChange(withTargetWeight(scenario, assetClass.id, weight))}
+            label={`Target weight for ${assetClass.name}`}
+          />
           <button
             type="button"
             className="remove-button"
@@ -121,6 +158,16 @@ function AssetClassesCard({ scenario, onChange }: EditorProps) {
           </button>
         </div>
       ))}
+      {scenario.portfolio.assetClasses.length > 0 && (
+        <div className={`class-row class-row-total ${total === TOTAL_BPS ? "total-ok" : "total-bad"}`}>
+          <span className="field-label">Targets total</span>
+          <span className="num class-total-value">
+            {formatBpsAsPercent(total)}
+            {total !== TOTAL_BPS && " — must total 100%"}
+          </span>
+          <span />
+        </div>
+      )}
       <AddRow
         placeholder="New asset class name"
         buttonLabel="Add class"
@@ -203,12 +250,13 @@ function FundsCard({ scenario, onChange }: EditorProps) {
 }
 
 function AccountCard({ scenario, onChange, accountId }: EditorProps & { accountId: string }) {
+  // Whether the (zero-amount) contribution row is shown even though the
+  // scenario has no entry for it — set by the add picker, cleared by its ✕.
+  const [contributionOpen, setContributionOpen] = useState(false);
   const account = scenario.portfolio.accounts.find((a) => a.id === accountId);
   if (!account) return null;
-  const { funds, holdings } = scenario.portfolio;
-  const holdingByFundId = new Map(
-    holdings.filter((h) => h.accountId === accountId).map((h) => [h.fundId, h.value]),
-  );
+  const contribution = scenario.contributions.find((c) => c.accountId === account.id)?.amount ?? 0;
+  const showContribution = contributionOpen || contribution !== 0;
   return (
     <div className="card editor-card account-card">
       <div className="account-card-header">
@@ -239,75 +287,262 @@ function AccountCard({ scenario, onChange, accountId }: EditorProps & { accountI
           ✕
         </button>
       </div>
-      {funds.length === 0 ? (
-        <p className="editor-hint">Add funds to give this account something to hold or buy.</p>
-      ) : (
-        <div className="table-scroll">
-          <table className="account-fund-table">
-            <thead>
-              <tr>
-                <th scope="col">Fund</th>
-                <th scope="col">Buyable</th>
-                <th scope="col">Preference</th>
-                <th scope="col" className="num-col">Current value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {funds.map((fund) => {
-                const label = fund.ticker || fund.name || fund.id;
-                const rank = account.availableFundIds.indexOf(fund.id);
-                const held = holdingByFundId.get(fund.id) ?? 0;
-                return (
-                  <tr key={fund.id}>
-                    <th scope="row">{label}</th>
-                    <td>
-                      <input
-                        type="checkbox"
-                        aria-label={`${label} buyable in ${account.name}`}
-                        checked={rank !== -1}
-                        onChange={(event) =>
-                          onChange(setFundAvailability(scenario, account.id, fund.id, event.target.checked))
-                        }
-                      />
-                    </td>
-                    <td className="preference-cell">
-                      {rank !== -1 && (
-                        <>
-                          <span className="num">#{rank + 1}</span>
-                          <button
-                            type="button"
-                            aria-label={`Prefer ${label} more in ${account.name}`}
-                            disabled={rank === 0}
-                            onClick={() => onChange(moveFundPreference(scenario, account.id, fund.id, -1))}
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Prefer ${label} less in ${account.name}`}
-                            disabled={rank === account.availableFundIds.length - 1}
-                            onClick={() => onChange(moveFundPreference(scenario, account.id, fund.id, 1))}
-                          >
-                            ↓
-                          </button>
-                        </>
-                      )}
-                    </td>
-                    <td className="num-col">
-                      <MoneyInput
-                        cents={held}
-                        onCents={(value) => onChange(withHolding(scenario, account.id, fund.id, value))}
-                        label={`Current value of ${label} in ${account.name}`}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <AccountFundList
+        scenario={scenario}
+        onChange={onChange}
+        accountId={accountId}
+        onAddContribution={showContribution ? undefined : () => setContributionOpen(true)}
+      />
+      {showContribution && (
+        // Focusing the input pins the row open, so clearing the amount while
+        // editing doesn't unmount the field mid-keystroke.
+        <div className="contribution-row" onFocusCapture={() => setContributionOpen(true)}>
+          <span className="field-label">
+            Cash to invest
+            <span className="editor-hint">New contribution earmarked to this account</span>
+          </span>
+          <span className="fund-value-cell">
+            <MoneyInput
+              cents={contribution}
+              onCents={(amount) => onChange(withContribution(scenario, account.id, amount))}
+              label={`Cash to invest in ${account.name}`}
+            />
+          </span>
+          <button
+            type="button"
+            className="remove-button"
+            aria-label={`Remove cash to invest from ${account.name}`}
+            title="Clears this account's contribution"
+            onClick={() => {
+              setContributionOpen(false);
+              onChange(withContribution(scenario, account.id, 0));
+            }}
+          >
+            ✕
+          </button>
         </div>
       )}
     </div>
+  );
+}
+
+/** Sentinel picker value for adding a contribution row — fund ids are slugs, so this can't collide. */
+const ADD_CASH = "__cash__";
+
+/**
+ * The funds actually in an account: its buyable menu in preference order,
+ * then anything held-but-no-longer-buyable. New funds join via the picker
+ * at the bottom (fed from the Funds card), which also offers a "cash to
+ * invest" row when `onAddContribution` is provided; ✕ takes the fund out
+ * of the account entirely (menu and holding).
+ */
+function AccountFundList({
+  scenario,
+  onChange,
+  accountId,
+  onAddContribution,
+}: EditorProps & { accountId: string; onAddContribution?: () => void }) {
+  const account = scenario.portfolio.accounts.find((a) => a.id === accountId);
+  if (!account) return null;
+  const { funds, holdings } = scenario.portfolio;
+  const fundsById = new Map(funds.map((f) => [f.id, f]));
+  const fundLabel = (fundId: string) => {
+    const fund = fundsById.get(fundId);
+    return fund?.ticker || fund?.name || fundId;
+  };
+  const holdingByFundId = new Map(
+    holdings.filter((h) => h.accountId === accountId).map((h) => [h.fundId, h.value]),
+  );
+
+  const heldOnlyFundIds = funds
+    .filter((f) => !account.availableFundIds.includes(f.id) && holdingByFundId.has(f.id))
+    .map((f) => f.id);
+  const inAccount = new Set([...account.availableFundIds, ...heldOnlyFundIds]);
+  const addable = funds.filter((f) => !inAccount.has(f.id));
+
+  const removeFromAccount = (fundId: string) =>
+    onChange(withHolding(setFundAvailability(scenario, account.id, fundId, false), account.id, fundId, 0));
+
+  const sensors = useSensors(
+    // A few px of slop so a plain click on the handle doesn't start a drag.
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const toIndex = account.availableFundIds.indexOf(String(over.id));
+    if (toIndex === -1) return;
+    onChange(reorderFundPreference(scenario, account.id, String(active.id), toIndex));
+  };
+
+  const rowFor = (fundId: string) => ({
+    valueCents: holdingByFundId.get(fundId) ?? 0,
+    onValue: (value: number) => onChange(withHolding(scenario, account.id, fundId, value)),
+    onRemove: () => removeFromAccount(fundId),
+  });
+
+  return (
+    <>
+      {funds.length === 0 ? (
+        <p className="editor-hint">Add funds to give this account something to hold or buy.</p>
+      ) : account.availableFundIds.length === 0 && heldOnlyFundIds.length === 0 ? (
+        <p className="editor-hint">No funds in this account yet — add one below.</p>
+      ) : (
+        <div className="fund-list">
+          <div className="fund-row fund-list-header" aria-hidden="true">
+            <span />
+            <span>Fund</span>
+            <span className="fund-value-heading">Current value</span>
+            <span />
+          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+            onDragEnd={onDragEnd}
+          >
+            <SortableContext items={account.availableFundIds} strategy={verticalListSortingStrategy}>
+              <ul className="fund-rows">
+                {account.availableFundIds.map((fundId, index) => (
+                  <SortableFundRow
+                    key={fundId}
+                    fundId={fundId}
+                    label={fundLabel(fundId)}
+                    accountName={account.name}
+                    rank={index + 1}
+                    {...rowFor(fundId)}
+                  />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
+          {heldOnlyFundIds.length > 0 && (
+            <ul className="fund-rows">
+              {heldOnlyFundIds.map((fundId) => (
+                <li className="fund-row" key={fundId}>
+                  <span className="drag-cell">
+                    <span className="chip">held</span>
+                  </span>
+                  <span className="fund-row-label" title="Held but not buyable in this account">
+                    {fundLabel(fundId)} <span className="editor-hint-inline">not buyable</span>
+                  </span>
+                  <span className="fund-value-cell">
+                    <MoneyInput
+                      cents={rowFor(fundId).valueCents}
+                      onCents={rowFor(fundId).onValue}
+                      label={`Current value of ${fundLabel(fundId)} in ${account.name}`}
+                    />
+                  </span>
+                  <RemoveFundButton label={fundLabel(fundId)} accountName={account.name} onRemove={rowFor(fundId).onRemove} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {(addable.length > 0 || onAddContribution) && (
+        <div className="add-fund-row">
+          <select
+            aria-label={`Add to ${account.name}`}
+            value=""
+            onChange={(event) => {
+              if (event.target.value === ADD_CASH) onAddContribution?.();
+              else if (event.target.value) {
+                onChange(setFundAvailability(scenario, account.id, event.target.value, true));
+              }
+            }}
+          >
+            <option value="">
+              {addable.length === 0 ? "＋ Add cash…" : onAddContribution ? "＋ Add fund or cash…" : "＋ Add fund…"}
+            </option>
+            {addable.map((fund) => (
+              <option key={fund.id} value={fund.id}>
+                {fund.ticker || fund.name || fund.id}
+                {fund.name && fund.ticker ? ` — ${fund.name}` : ""}
+              </option>
+            ))}
+            {onAddContribution && <option value={ADD_CASH}>Cash to invest (new contribution)</option>}
+          </select>
+        </div>
+      )}
+    </>
+  );
+}
+
+function RemoveFundButton({
+  label,
+  accountName,
+  onRemove,
+}: {
+  label: string;
+  accountName: string;
+  onRemove: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="remove-button"
+      aria-label={`Remove ${label} from ${accountName}`}
+      title="Removes this fund from the account (menu and holding)"
+      onClick={onRemove}
+    >
+      ✕
+    </button>
+  );
+}
+
+/**
+ * One draggable row of an account's buyable menu. The grip is the only drag
+ * activator, so the money input and buttons stay ordinary controls; it is a
+ * real button, so keyboard users can focus it and reorder with
+ * space + arrow keys (dnd-kit's keyboard sensor).
+ */
+function SortableFundRow({
+  fundId,
+  label,
+  accountName,
+  rank,
+  valueCents,
+  onValue,
+  onRemove,
+}: {
+  fundId: string;
+  label: string;
+  accountName: string;
+  rank: number;
+  valueCents: number;
+  onValue: (value: number) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: fundId,
+  });
+  return (
+    <li
+      ref={setNodeRef}
+      className={`fund-row${isDragging ? " fund-row-dragging" : ""}`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <span className="drag-cell">
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          className="drag-handle"
+          aria-label={`Reorder ${label} in ${accountName} (position ${rank})`}
+          {...attributes}
+          {...listeners}
+        >
+          ⠿
+        </button>
+        <span className="num rank">#{rank}</span>
+      </span>
+      <span className="fund-row-label">{label}</span>
+      <span className="fund-value-cell">
+        <MoneyInput cents={valueCents} onCents={onValue} label={`Current value of ${label} in ${accountName}`} />
+      </span>
+      <RemoveFundButton label={label} accountName={accountName} onRemove={onRemove} />
+    </li>
   );
 }
 

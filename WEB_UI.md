@@ -37,23 +37,35 @@ pnpm --filter @rebalancer/web run test:watch
 
 The page is one screen, top to bottom:
 
-1. **Portfolio** — the builder. Asset classes (name + tax preference),
-   funds (ticker, optional full name, asset class), and one card per
-   account: its tax type, which funds are *buyable* there, the preference
-   order (#1 is bought first and receives leftover cash; the arrows
-   reorder), and each position's current dollar value. Removals cascade —
-   deleting an asset class deletes its funds, their holdings, menu entries,
-   and its target — so the document always stays referentially intact.
-2. **Plan** — targets per asset class (with a live "must total 100%"
-   check), contributions per account (money never moves between accounts,
-   so there is no lump-sum field), and the solver options: selling toggles,
-   tolerance band, minimum sell-funded trade, optimizer.
-3. **Results** — recomputed by `rebalance()` on every edit. Trades grouped
+1. **Portfolio** — the builder. Asset classes (name, tax preference, and
+   each class's target share, with a live "must total 100%" total line);
+   funds (ticker, optional full name, asset class); and one card per
+   account: its tax type, just the funds in that account — the buyable
+   menu in preference order (#1 is bought first and receives leftover
+   cash; the ordered list is the solver's only fund-preference input) with
+   each position's current dollar value — and a "Cash to invest" line for
+   the account's contribution (account-scoped, because money never moves
+   between accounts). Drag a row's grip to reorder (the handle is a real
+   button: space to lift, arrows to move, space to drop); the ＋ Add fund…
+   picker appends a fund as least-preferred, and ✕ removes a fund from the
+   account (menu entry and holding). Removals cascade — deleting an asset
+   class deletes its funds, their holdings, menu entries, and its target —
+   so the document always stays referentially intact.
+2. **Results** — recomputed by `rebalance()` on every edit. Trades grouped
    by account with each trade's human-readable reason shown in full, the
    portfolio-by-asset-class table (current → target → trades → final →
    vs target), per-account before/after position tables, and any warnings.
    If the current inputs are invalid (targets don't total 100%, say), the
    solver's own error message renders where the results would be.
+
+Selling is **on by default** in the UI, taxable accounts included (the
+solver itself stays buy-only by default); the always-visible "Allow
+selling in taxable accounts" checkbox at the top starts checked — uncheck
+it to rebalance only tax-advantaged accounts by selling. The rarer knobs —
+allow selling at all, tolerance band, minimum sell-funded trade,
+optimizer — live behind the ⚙ Settings button; whenever any of them is
+non-default, a summary note appears next to the Trades heading so
+tucked-away settings can never invisibly shape the results.
 
 **Download JSON / Load JSON…** in the header save and restore the complete
 scenario. The file is the solver's canonical `Scenario` document — exactly

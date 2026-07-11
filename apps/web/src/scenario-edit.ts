@@ -157,16 +157,18 @@ export function setFundAvailability(
   });
 }
 
-/** Move a fund one step up (-1, more preferred) or down (+1) in an account's menu. */
-export function moveFundPreference(scenario: Scenario, accountId: string, fundId: string, step: -1 | 1): Scenario {
+/** Move a fund to a new position in an account's preference order (0 = most preferred). */
+export function reorderFundPreference(scenario: Scenario, accountId: string, fundId: string, toIndex: number): Scenario {
   return withPortfolio(scenario, {
     accounts: scenario.portfolio.accounts.map((a) => {
       if (a.id !== accountId) return a;
-      const index = a.availableFundIds.indexOf(fundId);
-      const target = index + step;
-      if (index === -1 || target < 0 || target >= a.availableFundIds.length) return a;
+      const fromIndex = a.availableFundIds.indexOf(fundId);
+      if (fromIndex === -1) return a;
+      const clamped = Math.max(0, Math.min(a.availableFundIds.length - 1, toIndex));
+      if (clamped === fromIndex) return a;
       const reordered = [...a.availableFundIds];
-      [reordered[index], reordered[target]] = [reordered[target]!, reordered[index]!];
+      reordered.splice(fromIndex, 1);
+      reordered.splice(clamped, 0, fundId);
       return { ...a, availableFundIds: reordered };
     }),
   });
@@ -179,11 +181,17 @@ export function withHolding(scenario: Scenario, accountId: string, fundId: strin
   return withPortfolio(scenario, { holdings });
 }
 
-/** A blank slate for building a portfolio from scratch. */
+/**
+ * A blank slate for building a portfolio from scratch. Selling is on by
+ * default in the web UI, taxable accounts included (the solver's own
+ * default stays buy-only); the always-visible checkbox turns taxable
+ * sells off.
+ */
 export function emptyScenario(): Scenario {
   return {
     portfolio: { accounts: [], funds: [], assetClasses: [], holdings: [] },
     targets: [],
     contributions: [],
+    options: { allowSelling: true, sellInTaxableAccounts: true },
   };
 }
