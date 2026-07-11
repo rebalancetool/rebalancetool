@@ -633,6 +633,18 @@ button:disabled {
   padding-top: 8px;
 }
 
+/* "Cash to invest" line at the bottom of each account card; the input
+   lines up with the Current value column above it (34px ✕ column + gap). */
+.contribution-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 8px 44px 2px 0;
+  border-top: 1.5px solid var(--border-strong);
+}
+
 .add-fund-row select {
   color: var(--text-muted);
   font-weight: 550;

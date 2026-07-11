@@ -33,6 +33,7 @@ import {
   updateAccount,
   updateAssetClass,
   updateFund,
+  withContribution,
   withHolding,
   withTargetWeight,
 } from "./scenario-edit.ts";
@@ -282,6 +283,17 @@ function AccountCard({ scenario, onChange, accountId }: EditorProps & { accountI
         </button>
       </div>
       <AccountFundList scenario={scenario} onChange={onChange} accountId={accountId} />
+      <div className="contribution-row">
+        <span className="field-label">
+          Cash to invest
+          <span className="editor-hint">New contribution earmarked to this account — it can't move to another.</span>
+        </span>
+        <MoneyInput
+          cents={scenario.contributions.find((c) => c.accountId === account.id)?.amount ?? 0}
+          onCents={(amount) => onChange(withContribution(scenario, account.id, amount))}
+          label={`Cash to invest in ${account.name}`}
+        />
+      </div>
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { PortfolioEditor } from "./PortfolioEditor.tsx";
 import { ResultView } from "./ResultView.tsx";
 import { emptyScenario } from "./scenario-edit.ts";
 import { scenarioFromJson, scenarioToJson } from "./scenario-file.ts";
-import { ContributionsEditor, OptionsEditor } from "./ScenarioEditor.tsx";
+import { OptionsEditor } from "./ScenarioEditor.tsx";
 
 type Outcome = { result: RebalanceResult; error?: undefined } | { result?: undefined; error: string };
 
@@ -99,7 +99,6 @@ export function App() {
       <section aria-labelledby="scenario-heading">
         <h2 id="scenario-heading">Plan</h2>
         <div className="editor-grid">
-          <ContributionsEditor scenario={scenario} onChange={setScenario} />
           <OptionsEditor scenario={scenario} onChange={setScenario} />
         </div>
       </section>

@@ -36,7 +36,7 @@ test("typing a contribution feeds the solver and shows up in the account breakdo
   const user = userEvent.setup();
   render(<App />);
 
-  const rothContribution = screen.getByLabelText("Contribution to Roth IRA");
+  const rothContribution = screen.getByLabelText("Cash to invest in Roth IRA");
   await user.clear(rothContribution);
   await user.type(rothContribution, "1000");
 
@@ -67,7 +67,7 @@ test("a portfolio built from scratch in the UI produces trades", async () => {
 
   // Plan: 100% US Stocks, $100 contribution.
   await user.type(screen.getByLabelText("Target weight for US Stocks"), "100");
-  await user.type(screen.getByLabelText("Contribution to My IRA"), "100");
+  await user.type(screen.getByLabelText("Cash to invest in My IRA"), "100");
 
   const trades = screen.getByRole("region", { name: "Trades" });
   expect(within(trades).getByText("BUY")).toBeInTheDocument();

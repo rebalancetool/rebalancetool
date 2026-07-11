@@ -1,38 +1,18 @@
 import { DEFAULT_TOLERANCE_BPS } from "@rebalancer/solver";
 import type { Scenario } from "@rebalancer/solver";
 import { MoneyInput, PercentInput } from "./inputs.tsx";
-import { withContribution, withOptions } from "./scenario-edit.ts";
+import { withOptions } from "./scenario-edit.ts";
 
 /**
- * The contributions / options editors. Each edits one slice of the
- * Scenario via the pure updaters in scenario-edit.ts and reports the
- * whole new Scenario up — the solver run happens in App. (Targets are
- * edited in the Asset classes card, next to the classes themselves.)
+ * The options editor. It edits the options slice of the Scenario via the
+ * pure updaters in scenario-edit.ts and reports the whole new Scenario up —
+ * the solver run happens in App. (Targets are edited in the Asset classes
+ * card; contributions in each account card.)
  */
 
 interface EditorProps {
   scenario: Scenario;
   onChange: (scenario: Scenario) => void;
-}
-
-export function ContributionsEditor({ scenario, onChange }: EditorProps) {
-  const amountByAccountId = new Map(scenario.contributions.map((c) => [c.accountId, c.amount]));
-  return (
-    <div className="card editor-card">
-      <h3>Contributions</h3>
-      <p className="editor-hint">New cash to invest, per account. Money never moves between accounts.</p>
-      {scenario.portfolio.accounts.map((account) => (
-        <div className="field-row" key={account.id}>
-          <span className="field-label">{account.name}</span>
-          <MoneyInput
-            cents={amountByAccountId.get(account.id) ?? 0}
-            onCents={(amount) => onChange(withContribution(scenario, account.id, amount))}
-            label={`Contribution to ${account.name}`}
-          />
-        </div>
-      ))}
-    </div>
-  );
 }
 
 export function OptionsEditor({ scenario, onChange }: EditorProps) {
