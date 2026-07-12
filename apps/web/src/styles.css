@@ -421,6 +421,24 @@ select {
   color: var(--sell);
 }
 
+/* First-run guidance card (shown while the portfolio has no asset classes). */
+.get-started {
+  margin-top: 32px;
+  border-style: dashed;
+}
+
+.get-started h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.get-started p {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 70ch;
+}
+
 /* Compliance footer: quiet but always present and readable. */
 .app-footer {
   margin-top: 56px;

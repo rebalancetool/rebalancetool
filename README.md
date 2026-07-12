@@ -19,9 +19,9 @@ repository perform arithmetic on information you provide: you choose the
 asset classes, the target allocation, the funds, and which accounts may
 hold them; the solver computes trades that move your stated holdings
 toward your stated targets. It does not recommend any security,
-allocation, or strategy, and all bundled example data (the fixtures and
-the web UI's demo household) is illustrative only — not a suggested
-portfolio. Nothing here is investment, tax, or legal advice. Consult a
+allocation, or strategy; the web UI starts empty, and the fixture files
+bundled for tests and CLI examples are illustrative only — not suggested
+portfolios. Nothing here is investment, tax, or legal advice. Consult a
 qualified professional before making investment decisions. The web UI
 runs entirely in your browser; nothing you enter is transmitted or
 stored by the site.

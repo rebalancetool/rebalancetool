@@ -13,10 +13,13 @@ pnpm install     # once, at the repo root (Node 24 — run `fnm use` first)
 pnpm dev         # start the Vite dev server
 ```
 
-Then open **http://localhost:5173**. The page loads with the built-in
-example household (the same placeholder data as
-`packages/solver/fixtures/example.json`) so there is something to look at
-immediately; use **Start empty** to build from scratch.
+Then open **http://localhost:5173**. The page deliberately starts
+**empty** — shipping a pre-filled example portfolio could read as a
+suggested allocation, and the compliance posture is that every number on
+screen was stated by the user. A getting-started card points the way; to
+have something to look at, load any fixture from
+`packages/solver/fixtures/` via **Load JSON…** (the UI tests drive a
+populated household through the same `initialScenario` prop).
 
 To test a production build instead of the dev server:
 

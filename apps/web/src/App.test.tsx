@@ -2,9 +2,10 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
 import { App } from "./App.tsx";
+import { demoScenario } from "./demo-scenario.ts";
 
-test("renders the demo scenario's solved result on load", () => {
-  render(<App />);
+test("renders a populated scenario's solved result", () => {
+  render(<App initialScenario={demoScenario} />);
   expect(screen.getByRole("heading", { name: "Asset Allocation Rebalance Calculator" })).toBeInTheDocument();
   const trades = screen.getByRole("region", { name: "Trades" });
   expect(within(trades).getAllByText("BUY").length).toBeGreaterThan(0);
@@ -12,16 +13,16 @@ test("renders the demo scenario's solved result on load", () => {
 });
 
 test("the compliance disclaimer footer is always present", () => {
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
   const footer = screen.getByRole("contentinfo");
   expect(footer).toHaveTextContent("This is a calculator, not investment advice.");
-  expect(footer).toHaveTextContent("not a suggested portfolio");
+  expect(footer).toHaveTextContent("It does not recommend any security, allocation, or strategy.");
   expect(footer).toHaveTextContent("Your data stays in your browser and is never transmitted or stored by this site.");
 });
 
 test("breaking the targets total replaces results with an error, fixing it brings them back", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   const usStocks = screen.getByLabelText("Target weight for US Stocks");
   await user.clear(usStocks);
@@ -42,7 +43,7 @@ test("breaking the targets total replaces results with an error, fixing it bring
 
 test("a contribution row added from the picker feeds the solver; its ✕ clears it", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   // Roth IRA has no contribution in the demo, so the row starts hidden.
   expect(screen.queryByLabelText("Cash to invest in Roth IRA")).not.toBeInTheDocument();
@@ -59,12 +60,27 @@ test("a contribution row added from the picker feeds the solver; its ✕ clears 
   expect(within(accounts()).queryByText(/\+\$1,000\.00 cash in/)).not.toBeInTheDocument();
 });
 
+test("the app starts empty with a getting-started card, never an example portfolio", () => {
+  render(<App />);
+  expect(screen.getByRole("heading", { name: "Start with your portfolio" })).toBeInTheDocument();
+  expect(screen.queryByText("Can’t rebalance yet")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Trades" })).not.toBeInTheDocument();
+  // No pre-filled securities anywhere.
+  expect(screen.queryByText("VTI")).not.toBeInTheDocument();
+});
+
+test("Clear all wipes everything back to the getting-started card", async () => {
+  const user = userEvent.setup();
+  render(<App initialScenario={demoScenario} />);
+
+  await user.click(screen.getByRole("button", { name: "Clear all" }));
+  expect(screen.getByRole("heading", { name: "Start with your portfolio" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Target weight for US Stocks")).not.toBeInTheDocument();
+});
+
 test("a portfolio built from scratch in the UI produces trades", async () => {
   const user = userEvent.setup();
   render(<App />);
-
-  await user.click(screen.getByRole("button", { name: "Start empty" }));
-  expect(screen.getByText("Can’t rebalance yet")).toBeInTheDocument();
 
   // Build: one asset class, one fund, one tax-deferred account holding $900.
   await user.type(screen.getByLabelText("New asset class name"), "US Stocks");
@@ -93,7 +109,7 @@ test("a portfolio built from scratch in the UI produces trades", async () => {
 
 test("uploading a scenario JSON file replaces the state", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   const uploaded = {
     portfolio: {
@@ -117,7 +133,7 @@ test("uploading a scenario JSON file replaces the state", async () => {
 
 test("uploading a broken file shows an error and keeps the current scenario", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   const file = new File(["{ not json"], "broken.json", { type: "application/json" });
   await user.upload(screen.getByLabelText("Load scenario JSON file"), file);
@@ -130,7 +146,7 @@ test("uploading a broken file shows an error and keeps the current scenario", as
 
 test("removing a fund from an account clears its menu entry and holding, and it becomes addable again", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   // VXUS is in the taxable account's menu (so not in its add picker) and holds $8,000.
   const addPicker = () => screen.getByLabelText("Add to Taxable Brokerage");
@@ -149,7 +165,7 @@ test("removing a fund from an account clears its menu entry and holding, and it 
 
 test("the demo's VT blend shows a Blend toggle in the Funds card and is editable slice by slice", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   // Collapsed: a compact "Blend" toggle whose tooltip carries the mix.
   const summary = screen.getByRole("button", { name: "Asset class blend for VT" });
@@ -173,7 +189,7 @@ test("the demo's VT blend shows a Blend toggle in the Funds card and is editable
 
 test("a new fund can be added as a blend straight from the add row", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   await user.type(screen.getByLabelText("New fund ticker"), "aoa");
   await user.selectOptions(screen.getByLabelText("Asset class for new fund"), "__blend__");
@@ -188,7 +204,7 @@ test("a new fund can be added as a blend straight from the add row", async () =>
 
 test("the add row refuses a duplicate ticker outright", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   await user.type(screen.getByLabelText("New fund ticker"), "vti");
   expect(screen.getByRole("button", { name: "Add fund" })).toBeDisabled();
@@ -202,7 +218,7 @@ test("the add row refuses a duplicate ticker outright", async () => {
 
 test("the add rows refuse duplicate class and account names, case-insensitively", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   await user.type(screen.getByLabelText("New asset class name"), "US Stocks");
   expect(screen.getByRole("button", { name: "Add class" })).toBeDisabled();
@@ -215,7 +231,7 @@ test("the add rows refuse duplicate class and account names, case-insensitively"
 
 test("editing an existing fund's ticker into a collision surfaces the solver's error until fixed", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   const vxusTicker = screen.getByLabelText("Ticker for fund vxus");
   await user.clear(vxusTicker);
@@ -233,7 +249,7 @@ test("editing an existing fund's ticker into a collision surfaces the solver's e
 
 test("a single-class fund becomes a blend through the 'Blend of classes…' picker", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   // VTI starts as a plain class dropdown; choosing the blend option opens
   // the slice editor without changing the data (100% US Stocks).
@@ -268,7 +284,7 @@ test("a single-class fund becomes a blend through the 'Blend of classes…' pick
 
 test("fund preference order can be changed from the drag handle's keyboard mode", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   // Taxable Brokerage menu is VTI #1, VXUS #2.
   const handle = screen.getByLabelText("Reorder VXUS in Taxable Brokerage (position 2)");
@@ -283,7 +299,7 @@ test("fund preference order can be changed from the drag handle's keyboard mode"
 
 test("selling is on by default; turning it off in Settings removes sells and flags it", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   const trades = () => screen.getByRole("region", { name: "Trades" });
   expect(within(trades()).getAllByText("SELL").length).toBeGreaterThan(0);
@@ -298,7 +314,7 @@ test("selling is on by default; turning it off in Settings removes sells and fla
 
 test("taxable sells are on by default; unchecking the checkbox protects taxable accounts", async () => {
   const user = userEvent.setup();
-  render(<App />);
+  render(<App initialScenario={demoScenario} />);
 
   const trades = () => screen.getByRole("region", { name: "Trades" });
   const taxableTradeCard = () =>

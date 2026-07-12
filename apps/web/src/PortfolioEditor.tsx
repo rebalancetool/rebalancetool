@@ -411,12 +411,14 @@ function FundsCard({ scenario, onChange }: EditorProps) {
           disabled={assetClasses.length === 0}
           onChange={(event) => setNewFundClassId(event.target.value)}
         >
+          {/* Before any class exists the (disabled) picker shows blank, not "Blend…". */}
+          {assetClasses.length === 0 && <option value="" />}
           {assetClasses.map((assetClass) => (
             <option key={assetClass.id} value={assetClass.id}>
               {assetClass.name}
             </option>
           ))}
-          <option value={BLEND}>Blend of classes…</option>
+          {assetClasses.length > 0 && <option value={BLEND}>Blend of classes…</option>}
         </select>
       </AddRow>
     </div>
