@@ -368,6 +368,22 @@ function formatDollars(cents: number): string {
   return `${cents < 0 ? "-" : ""}$${dollars}`;
 }
 
+/** Throws when two items share a (trimmed, case-folded) non-blank name. `kindPlural` e.g. "Accounts". */
+function requireUniqueNames(kindPlural: string, items: ReadonlyArray<{ id: string; name: string }>): void {
+  const idByName = new Map<string, string>();
+  for (const item of items) {
+    const name = item.name.trim().toLowerCase();
+    if (!name) continue;
+    const other = idByName.get(name);
+    if (other !== undefined) {
+      throw new Error(
+        `${kindPlural} "${other}" and "${item.id}" are both named "${item.name.trim()}" — names must be unique.`,
+      );
+    }
+    idByName.set(name, item.id);
+  }
+}
+
 function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOptions): void {
   const assetClassIds = new Set(portfolio.assetClasses.map((a) => a.id));
   const fundIds = new Set(portfolio.funds.map((f) => f.id));
@@ -376,6 +392,28 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   if (assetClassIds.size !== portfolio.assetClasses.length) throw new Error("Duplicate AssetClass id.");
   if (fundIds.size !== portfolio.funds.length) throw new Error("Duplicate Fund id.");
   if (accountIds.size !== portfolio.accounts.length) throw new Error("Duplicate Account id.");
+
+  // Tickers identify funds to the user (trades are displayed by ticker), so
+  // two funds sharing one would make the output ambiguous. Case-insensitive;
+  // ticker-less funds (e.g. named 401(k) menu entries) never collide.
+  const fundIdByTicker = new Map<string, string>();
+  for (const fund of portfolio.funds) {
+    const ticker = fund.ticker?.trim().toUpperCase();
+    if (!ticker) continue;
+    const other = fundIdByTicker.get(ticker);
+    if (other !== undefined) {
+      throw new Error(`Funds "${other}" and "${fund.id}" both have ticker "${ticker}" — tickers must be unique.`);
+    }
+    fundIdByTicker.set(ticker, fund.id);
+  }
+
+  // Likewise, names are the only identity asset classes and accounts have in
+  // the output, so duplicates make every table ambiguous. (Fund *names* are
+  // deliberately not checked: share classes legitimately reuse one — VTI and
+  // VTSAX are both "Vanguard Total Stock Market" — and funds are identified
+  // by ticker, checked above.) Case-insensitive; blank names never collide.
+  requireUniqueNames("Asset classes", portfolio.assetClasses);
+  requireUniqueNames("Accounts", portfolio.accounts);
 
   for (const fund of portfolio.funds) {
     const entries = Object.entries(fund.assetClasses);

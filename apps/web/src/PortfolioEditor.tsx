@@ -68,23 +68,30 @@ interface EditorProps {
   onChange: (scenario: Scenario) => void;
 }
 
-/** Text field + Add button (button click only — no form submit). */
+/**
+ * Text field + Add button (button click only — no form submit). `draftError`
+ * vets the trimmed draft as it's typed — a duplicate name, say — disabling
+ * the button with the returned message instead of letting a bad add through.
+ */
 function AddRow({
   placeholder,
   buttonLabel,
   onAdd,
   disabledReason,
+  draftError,
   children,
 }: {
   placeholder: string;
   buttonLabel: string;
   onAdd: (name: string) => void;
   disabledReason?: string;
+  draftError?: (name: string) => string | undefined;
   children?: React.ReactNode;
 }) {
   const [name, setName] = useState("");
+  const error = name.trim() === "" ? undefined : draftError?.(name.trim());
   const add = () => {
-    if (name.trim() === "") return;
+    if (name.trim() === "" || error !== undefined) return;
     onAdd(name.trim());
     setName("");
   };
@@ -102,10 +109,15 @@ function AddRow({
         }}
       />
       {children}
-      <button type="button" onClick={add} disabled={disabledReason !== undefined || name.trim() === ""}>
+      <button
+        type="button"
+        onClick={add}
+        disabled={disabledReason !== undefined || name.trim() === "" || error !== undefined}
+      >
         {buttonLabel}
       </button>
       {disabledReason && <span className="editor-hint">{disabledReason}</span>}
+      {!disabledReason && error && <span className="editor-hint">{error}</span>}
     </div>
   );
 }
@@ -178,6 +190,11 @@ function AssetClassesCard({ scenario, onChange }: EditorProps) {
         placeholder="New asset class name"
         buttonLabel="Add class"
         onAdd={(name) => onChange(addAssetClass(scenario, name))}
+        draftError={(name) =>
+          scenario.portfolio.assetClasses.some((c) => c.name.trim().toLowerCase() === name.toLowerCase())
+            ? `An asset class named "${name}" already exists.`
+            : undefined
+        }
       />
     </div>
   );
@@ -374,6 +391,11 @@ function FundsCard({ scenario, onChange }: EditorProps) {
         placeholder="New fund ticker"
         buttonLabel="Add fund"
         disabledReason={assetClasses.length === 0 ? "Add an asset class first." : undefined}
+        draftError={(ticker) =>
+          funds.some((f) => (f.ticker ?? "").trim().toUpperCase() === ticker.toUpperCase())
+            ? `${ticker.toUpperCase()} is already in the fund list.`
+            : undefined
+        }
         onAdd={(ticker) => {
           // A brand-new blend starts as 100% of the first class with its
           // slice editor open, ready to be carved up.
@@ -716,6 +738,11 @@ export function PortfolioEditor({ scenario, onChange }: EditorProps) {
           placeholder="New account name"
           buttonLabel="Add account"
           onAdd={(name) => onChange(addAccount(scenario, name, newAccountTaxType))}
+          draftError={(name) =>
+            scenario.portfolio.accounts.some((a) => a.name.trim().toLowerCase() === name.toLowerCase())
+              ? `An account named "${name}" already exists.`
+              : undefined
+          }
         >
           <select
             aria-label="Tax type for new account"
