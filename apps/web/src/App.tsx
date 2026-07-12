@@ -65,7 +65,7 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
         <header className="app-header">
           <div>
             <h1>
-              <img className="wordmark" src="/wordmark.svg" alt="rebalancetool" height={28} />
+              <img className="wordmark" src="/wordmark.svg" alt="rebalancetool" height={48} />
             </h1>
             <p className="tagline">
               See the exact trades that rebalance your whole portfolio toward your targets —
