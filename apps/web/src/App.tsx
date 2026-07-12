@@ -66,8 +66,8 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
           <div>
             <h1>Asset Allocation Rebalance Calculator</h1>
             <p className="tagline">
-              Multi-account portfolio rebalancing. Everything runs in this page —
-              nothing is uploaded, and reloading clears it.
+              See the exact trades that rebalance your whole portfolio toward your targets —
+              every account at once, tax-aware, right in your browser.
             </p>
           </div>
           <div className="header-actions">
@@ -175,7 +175,10 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
           investment, tax, or legal advice. Consult a qualified professional before making investment
           decisions.
         </p>
-        <p>Your data stays in your browser and is never transmitted or stored by this site.</p>
+        <p>
+          Your data stays in your browser and is never transmitted or stored by this site. Reloading
+          clears the page — use <strong>Download JSON</strong> to keep a scenario.
+        </p>
       </footer>
     </div>
   );
