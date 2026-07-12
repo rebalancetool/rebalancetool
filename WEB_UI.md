@@ -33,6 +33,45 @@ pnpm run typecheck
 pnpm --filter @rebalancer/web run test:watch
 ```
 
+## Deploying
+
+The app is a fully static Vite build — no backend, no environment
+variables, no redirects — so any static host works. For git-integrated
+Cloudflare Pages:
+
+| Setting                | Value                                    |
+| ---------------------- | ---------------------------------------- |
+| Build command          | `pnpm --filter @rebalancer/web run build` |
+| Build output directory | `apps/web/dist`                          |
+| Root directory         | `/` (the repo root)                      |
+
+The deploy silently depends on repo properties that must stay true —
+keep these consistent when changing the build:
+
+- **Install must run at the repo root.** `@rebalancer/web` depends on
+  `@rebalancer/solver` via `workspace:*`, which only resolves with the
+  root `pnpm-lock.yaml`. Never point a host's "root directory" at
+  `apps/web`.
+- **The solver is consumed from `src/`, not `dist/`.** Its
+  `main`/`exports` point at `src/index.ts`, so `vite build` compiles the
+  solver's TypeScript itself and no pre-build step exists in the deploy
+  command. If the solver ever ships from `dist/`, every deploy config
+  needs a solver build added in front.
+- **`.nvmrc` and `package.json`'s `packageManager` are the toolchain
+  pins hosts read** (Node version, exact pnpm via corepack). Keep them
+  current; a host that ignores `.nvmrc` needs a `NODE_VERSION` env var
+  instead.
+- **Vite's `base` is the default `/`**, so built asset URLs are
+  absolute from the domain root. Fine for `*.pages.dev` or any custom
+  domain; serving under a subpath would require setting `base` in
+  `vite.config.ts`.
+- **There is one page and no client-side routing**, so no SPA rewrite
+  rules (`_redirects`) are needed. Adding a router later means adding
+  them.
+- Pages deploys on every push to `main`, independent of GitHub Actions
+  CI — branch protection (merged PRs only) is what keeps unreviewed
+  code off production.
+
 ## What it does
 
 The page is one screen, top to bottom:
