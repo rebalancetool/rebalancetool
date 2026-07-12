@@ -576,6 +576,18 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* A chevron matching the dropdowns' weight; flips while the editor is open. */
+.blend-caret {
+  width: 10px;
+  height: 6px;
+  flex: none;
+  transition: transform 0.12s ease;
+}
+
+.blend-summary[aria-expanded="true"] .blend-caret {
+  transform: rotate(180deg);
+}
+
 .blend-editor {
   margin: 0 0 8px 84px; /* aligns under the name column, past the ticker */
   padding: 6px 10px;

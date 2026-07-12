@@ -327,7 +327,17 @@ function FundsCard({ scenario, onChange }: EditorProps) {
                   title={blendSummary(fund, classNames)}
                   onClick={() => setBlendOpen(fund.id, !expanded)}
                 >
-                  Blend <span aria-hidden="true">{expanded ? "▴" : "▾"}</span>
+                  Blend
+                  <svg className="blend-caret" viewBox="0 0 10 6" aria-hidden="true">
+                    <path
+                      d="M1 1l4 4 4-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
                 </button>
               ) : (
                 <select
