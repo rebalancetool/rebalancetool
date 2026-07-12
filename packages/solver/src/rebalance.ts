@@ -463,6 +463,13 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   // by ticker, checked above.) Case-insensitive; blank names never collide.
   requireUniqueNames("Asset classes", portfolio.assetClasses);
   requireUniqueNames("Accounts", portfolio.accounts);
+  // A ticker-less fund is displayed by name, so *among ticker-less funds*
+  // names must be unique too. Funds with tickers may freely share a name —
+  // share classes do (VTI and VTSAX are both "Vanguard Total Stock Market").
+  requireUniqueNames(
+    "Ticker-less funds",
+    portfolio.funds.filter((f) => !f.ticker?.trim()),
+  );
 
   for (const fund of portfolio.funds) {
     const entries = Object.entries(fund.assetClasses);
@@ -490,10 +497,15 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   }
 
   for (const account of portfolio.accounts) {
+    const seen = new Set<string>();
     for (const fundId of account.availableFundIds) {
       if (!fundIds.has(fundId)) {
         throw new Error(`Account "${account.id}" availableFundIds references unknown fund "${fundId}".`);
       }
+      if (seen.has(fundId)) {
+        throw new Error(`Account "${account.id}" lists fund "${fundId}" more than once in availableFundIds.`);
+      }
+      seen.add(fundId);
     }
   }
 

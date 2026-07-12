@@ -749,6 +749,32 @@ describe("rebalance - core invariants", () => {
     expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(/Fund ids must be non-empty/);
   });
 
+  it("rejects duplicate names among ticker-less funds and duplicate availableFundIds entries", () => {
+    const portfolio: Portfolio = {
+      assetClasses: [{ id: "stocks", name: "Stocks" }],
+      funds: [
+        { id: "fund_a", name: "Employer Stock Fund", assetClasses: { stocks: 10000 } },
+        { id: "fund_b", name: "Employer Stock Fund", assetClasses: { stocks: 10000 } },
+      ],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["fund_a"] }],
+      holdings: [],
+    };
+    const targets: Target[] = [{ assetClassId: "stocks", weight: 10000 }];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(
+      /Ticker-less funds "fund_a" and "fund_b" are both named "Employer Stock Fund"/,
+    );
+
+    // The same shared name is fine once tickers disambiguate the funds.
+    portfolio.funds[0]!.ticker = "VTI";
+    portfolio.funds[1]!.ticker = "VTSAX";
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).not.toThrow();
+
+    portfolio.accounts[0]!.availableFundIds = ["fund_a", "fund_b", "fund_a"];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(
+      /Account "acct" lists fund "fund_a" more than once/,
+    );
+  });
+
   it("caps the portfolio total at ~$9B with a clear error, and solves cleanly right at the cap", () => {
     // The cap keeps every cents × basis-points product (and their sums)
     // inside Number.MAX_SAFE_INTEGER. Exercised with a blend so the

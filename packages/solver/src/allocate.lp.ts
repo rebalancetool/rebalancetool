@@ -58,7 +58,11 @@ import { TOTAL_BPS } from "./types.ts";
  * sell is not expressible in a single LP): solve, ban selling any position
  * whose sell came out below the floor, re-solve; repeat until every sell
  * clears the floor or doesn't happen. Terminates in at most one solve per
- * sellable position.
+ * sellable position. Known 1-cent edge: the integer-rounding repair below
+ * can in principle nudge a cent back into a sell that came out exactly at
+ * the floor, leaving it at floor − 1; a randomized search found no
+ * occurrence and the artifact is bounded at one cent, so it is documented
+ * rather than guarded.
  *
  * The simplex works in floats; positions the solver left (near-)untouched
  * are snapped back to exactly their current value — so rounding noise never
