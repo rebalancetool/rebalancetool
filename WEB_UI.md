@@ -51,14 +51,25 @@ tags live in `index.html`.
 ## Deploying
 
 The app is a fully static Vite build — no backend, no environment
-variables, no redirects — so any static host works. For git-integrated
-Cloudflare Pages:
+variables, no redirects — so any static host works.
 
-| Setting                | Value                                    |
-| ---------------------- | ---------------------------------------- |
-| Build command          | `pnpm --filter @rebalancer/web run build` |
-| Build output directory | `apps/web/dist`                          |
-| Root directory         | `/` (the repo root)                      |
+It's currently deployed to Cloudflare as a **static-assets Worker**
+(Cloudflare has quietly buried the classic Pages create flow; new git
+imports land in Workers Builds). `wrangler.jsonc` at the repo root is the
+whole config: no `main`/server code, no bindings, just
+`assets.directory: apps/web/dist`. Git-integrated Workers Builds settings:
+
+| Setting        | Value                                     |
+| -------------- | ----------------------------------------- |
+| Build command  | `pnpm --filter @rebalancer/web run build` |
+| Deploy command | `npx wrangler deploy` (the default)       |
+| Root directory | `/` (the repo root)                       |
+
+`npx wrangler deploy --dry-run` validates the config locally without
+auth. The classic **Pages** path still works identically if you can find
+it (Workers & Pages → Pages → Connect to Git) — it takes no deploy
+command and a `Build output directory` of `apps/web/dist` instead of
+`wrangler.jsonc`.
 
 The deploy silently depends on repo properties that must stay true —
 keep these consistent when changing the build:
