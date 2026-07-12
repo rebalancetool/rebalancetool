@@ -1,0 +1,11 @@
+{
+  // Static-assets-only Worker: serves apps/web's Vite build. No server code
+  // (no "main"), no bindings, no env vars — the app is a fully static SPA.
+  // Cloudflare Workers Builds: Build command  = pnpm --filter @rebalancer/web run build
+  //                            Deploy command = npx wrangler deploy   (the default)
+  "name": "rebalancer",
+  "compatibility_date": "2026-07-12",
+  "assets": {
+    "directory": "apps/web/dist"
+  }
+}
