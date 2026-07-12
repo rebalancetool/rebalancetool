@@ -149,6 +149,34 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       .map(([classId, weight]) => `${formatBpsAsPercent(weight)} ${assetClassesById.get(classId)!.name}`)
       .join(", ");
 
+  // Pre-trade class totals in integer cents (a blend's value split across
+  // its components by largest remainder). Reasons are phrased against
+  // these, so a trade never claims a class is below target when the table
+  // next to it says otherwise; reused later for the allocation report.
+  const currentTotals = new Map<string, number>();
+  const resultingTotals = new Map<string, number>();
+  for (const assetClass of portfolio.assetClasses) {
+    currentTotals.set(assetClass.id, 0);
+    resultingTotals.set(assetClass.id, 0);
+  }
+  const addSplit = (totals: Map<string, number>, fundId: string, value: number): void => {
+    const weights = weightsByFund.get(fundId)!;
+    const shares = proportionalAllocate(
+      value,
+      [...weights.entries()].map(([key, weight]) => ({ key, weight })),
+    );
+    for (const [classId, share] of shares) {
+      totals.set(classId, (totals.get(classId) ?? 0) + share);
+    }
+  };
+  for (const account of portfolio.accounts) {
+    for (const [fundId, value] of heldFundValues.get(account.id)!) addSplit(currentTotals, fundId, value);
+  }
+  const belowTarget = (classId: string): boolean =>
+    (currentTotals.get(classId) ?? 0) < (demands.get(classId) ?? 0);
+  const aboveTarget = (classId: string): boolean =>
+    (currentTotals.get(classId) ?? 0) > (demands.get(classId) ?? 0);
+
   const trades: Trade[] = [];
   const accountsByIdOrder = [...portfolio.accounts].sort((a, b) => a.id.localeCompare(b.id));
   for (const account of accountsByIdOrder) {
@@ -162,31 +190,43 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       const label = fund.ticker ?? fund.name;
       const soleClassId = weights.size === 1 ? weights.keys().next().value! : undefined;
       if (delta > 0) {
-        trades.push({
-          accountId: account.id,
-          fundId,
-          action: "buy",
-          amount: delta,
-          reason:
-            soleClassId !== undefined
-              ? `${assetClassesById.get(soleClassId)!.name} is below target; buying ${formatDollars(delta)} of ` +
-                `${label} in ${account.name}.`
-              : `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
-                `to close underweight asset classes.`,
-        });
+        // "Below target" is only claimed when it's true: a buy whose fund
+        // offers no under-target exposure is surplus-cash placement (cash
+        // may not sit idle, so it lands per the documented tie-breaks).
+        const fillsGap = soleClassId !== undefined ? belowTarget(soleClassId) : [...weights.keys()].some(belowTarget);
+        let reason: string;
+        if (soleClassId !== undefined) {
+          const className = assetClassesById.get(soleClassId)!.name;
+          reason = fillsGap
+            ? `${className} is below target; buying ${formatDollars(delta)} of ${label} in ${account.name}.`
+            : `${className} is at or above target; investing ${formatDollars(delta)} of surplus contribution ` +
+              `cash in ${label} in ${account.name}.`;
+        } else {
+          reason = fillsGap
+            ? `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+              `to close underweight asset classes.`
+            : `Investing ${formatDollars(delta)} of surplus contribution cash in ${label} ` +
+              `(${describeBlend(weights)}) in ${account.name}; none of its classes is below target.`;
+        }
+        trades.push({ accountId: account.id, fundId, action: "buy", amount: delta, reason });
       } else {
-        trades.push({
-          accountId: account.id,
-          fundId,
-          action: "sell",
-          amount: -delta,
-          reason:
-            soleClassId !== undefined
-              ? `${assetClassesById.get(soleClassId)!.name} is above target; selling ${formatDollars(-delta)} of ` +
-                `${label} in ${account.name} to fund underweight asset classes.`
-              : `Selling ${formatDollars(-delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
-                `to fund underweight asset classes.`,
-        });
+        // A single-class sell of a class that isn't above target can only be
+        // a relocation: the class floor forbids shrinking its total, so the
+        // dollars are repurchased in another account.
+        let reason: string;
+        if (soleClassId !== undefined) {
+          const className = assetClassesById.get(soleClassId)!.name;
+          reason = aboveTarget(soleClassId)
+            ? `${className} is above target; selling ${formatDollars(-delta)} of ${label} in ${account.name} ` +
+              `to fund underweight asset classes.`
+            : `Selling ${formatDollars(-delta)} of ${label} in ${account.name} to relocate ${className} to ` +
+              `another account, freeing this one for underweight classes.`;
+        } else {
+          reason =
+            `Selling ${formatDollars(-delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+            `to fund underweight asset classes.`;
+        }
+        trades.push({ accountId: account.id, fundId, action: "sell", amount: -delta, reason });
       }
     }
   }
@@ -255,27 +295,10 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   });
 
   // --- resulting allocation & deviation, post-trade ---
-  // A blended fund's dollars are split across its component classes by
-  // largest-remainder on the weights, so class totals stay integer cents and
-  // every fund's value is conserved exactly across its components.
-  const currentTotals = new Map<string, number>();
-  const resultingTotals = new Map<string, number>();
-  for (const assetClass of portfolio.assetClasses) {
-    currentTotals.set(assetClass.id, 0);
-    resultingTotals.set(assetClass.id, 0);
-  }
-  const addSplit = (totals: Map<string, number>, fundId: string, value: number): void => {
-    const weights = weightsByFund.get(fundId)!;
-    const shares = proportionalAllocate(
-      value,
-      [...weights.entries()].map(([key, weight]) => ({ key, weight })),
-    );
-    for (const [classId, share] of shares) {
-      totals.set(classId, (totals.get(classId) ?? 0) + share);
-    }
-  };
+  // Same largest-remainder splitting as the pre-trade totals above, so class
+  // totals stay integer cents and every fund's value is conserved exactly
+  // across its components.
   for (const account of portfolio.accounts) {
-    for (const [fundId, value] of heldFundValues.get(account.id)!) addSplit(currentTotals, fundId, value);
     for (const [fundId, value] of allocation.x.get(account.id)!) addSplit(resultingTotals, fundId, value);
   }
 

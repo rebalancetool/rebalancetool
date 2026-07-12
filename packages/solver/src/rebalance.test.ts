@@ -225,14 +225,15 @@ describe("rebalance - restricted fund menus (residual scenarios)", () => {
       expect(deviation.deviationBps).toBe(0);
     }
     // The signature relocation move: bonds sold in the IRA (a globally
-    // *underweight* class) while the 401(k) buys them back.
+    // *underweight* class) while the 401(k) buys them back — and the reason
+    // says that's what's happening instead of claiming bonds are overweight.
     const iraBondSell = result.trades.find((t) => t.accountId === "ira" && t.fundId === "bnd");
     expect(iraBondSell).toEqual({
       accountId: "ira",
       fundId: "bnd",
       action: "sell",
       amount: 100000,
-      reason: expect.stringContaining("US Bonds"),
+      reason: expect.stringContaining("relocate US Bonds"),
     });
   });
 
@@ -539,6 +540,56 @@ describe("rebalance - tolerance band and minTradeCents", () => {
     expect(() => rebalance(portfolio, targets, { contributions: [], toleranceBps: 10001 })).toThrow(/toleranceBps/);
     expect(() => rebalance(portfolio, targets, { contributions: [], toleranceBps: 1.5 })).toThrow(/toleranceBps/);
     expect(() => rebalance(portfolio, targets, { contributions: [], minTradeCents: -1 })).toThrow(/minTradeCents/);
+  });
+});
+
+describe("rebalance - trade reasons tell the truth", () => {
+  it("surplus-cash buys say so instead of claiming the class is below target", () => {
+    // The IRA's $100 contribution can't reach the international gap (only
+    // the brokerage offers VXUS), so it must be parked in an on-target
+    // class — bonds, via the documented tax-preference tie-break. The
+    // reason must describe surplus placement, not invent a bond gap the
+    // allocation table right next to it would contradict.
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "stocks", name: "Stocks" },
+        { id: "bonds", name: "Bonds", taxPreference: "prefer_tax_advantaged" },
+        { id: "intl", name: "International" },
+      ],
+      funds: [
+        { id: "vti", ticker: "VTI", name: "Total Stock", assetClasses: { stocks: 10000 } },
+        { id: "bnd", ticker: "BND", name: "Total Bond", assetClasses: { bonds: 10000 } },
+        { id: "vxus", ticker: "VXUS", name: "Total Intl", assetClasses: { intl: 10000 } },
+      ],
+      accounts: [
+        { id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vti", "bnd"] },
+        { id: "taxable", name: "Brokerage", taxType: "taxable", availableFundIds: ["vxus"] },
+      ],
+      holdings: [
+        { accountId: "ira", fundId: "vti", value: 400000 },
+        { accountId: "ira", fundId: "bnd", value: 300000 },
+        { accountId: "taxable", fundId: "vxus", value: 290000 },
+      ],
+    };
+    const targets: Target[] = [
+      { assetClassId: "stocks", weight: 4000 },
+      { assetClassId: "bonds", weight: 3000 },
+      { assetClassId: "intl", weight: 3000 },
+    ];
+    const result = rebalance(portfolio, targets, {
+      contributions: [{ accountId: "ira", amount: 10000 }],
+      toleranceBps: 0,
+    });
+
+    expect(result.trades).toEqual([
+      {
+        accountId: "ira",
+        fundId: "bnd",
+        action: "buy",
+        amount: 10000,
+        reason: "Bonds is at or above target; investing $100.00 of surplus contribution cash in BND in IRA.",
+      },
+    ]);
   });
 });
 
