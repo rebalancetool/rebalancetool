@@ -12,6 +12,20 @@ unless you explicitly let it.
 This is the core engine, a CLI, and a local-only web UI (see
 [WEB_UI.md](WEB_UI.md)). There is no CSV import — see "Scope" below.
 
+## Disclaimer
+
+**This is a calculator, not investment advice.** The tools in this
+repository perform arithmetic on information you provide: you choose the
+asset classes, the target allocation, the funds, and which accounts may
+hold them; the solver computes trades that move your stated holdings
+toward your stated targets. It does not recommend any security,
+allocation, or strategy, and all bundled example data (the fixtures and
+the web UI's demo household) is illustrative only — not a suggested
+portfolio. Nothing here is investment, tax, or legal advice. Consult a
+qualified professional before making investment decisions. The web UI
+runs entirely in your browser; nothing you enter is transmitted or
+stored by the site.
+
 ## How it works
 
 **Input** is one JSON scenario document (the `Scenario` type — the same

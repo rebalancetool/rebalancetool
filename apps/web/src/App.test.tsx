@@ -11,6 +11,14 @@ test("renders the demo scenario's solved result on load", () => {
   expect(screen.getByRole("region", { name: "Portfolio by asset class" })).toBeInTheDocument();
 });
 
+test("the compliance disclaimer footer is always present", () => {
+  render(<App />);
+  const footer = screen.getByRole("contentinfo");
+  expect(footer).toHaveTextContent("This is a calculator, not investment advice.");
+  expect(footer).toHaveTextContent("not a suggested portfolio");
+  expect(footer).toHaveTextContent("Your data stays in your browser and is never transmitted or stored by this site.");
+});
+
 test("breaking the targets total replaces results with an error, fixing it brings them back", async () => {
   const user = userEvent.setup();
   render(<App />);

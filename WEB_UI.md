@@ -111,6 +111,13 @@ behind the ⚙ Settings button; whenever any of them is non-default, a
 summary note appears next to the Trades heading so tucked-away settings
 can never invisibly shape the results.
 
+A permanent footer carries the compliance disclaimer: the tool is a
+calculator performing arithmetic on user-supplied inputs, not
+personalized investment advice, and data never leaves the browser. Keep
+it visible on every layout change — presenting impersonal calculation
+(rather than security recommendations) is a legal posture, not just
+copy.
+
 **Download JSON / Load JSON…** in the header save and restore the complete
 scenario. The file is the solver's canonical `Scenario` document — exactly
 what the CLI reads — so a downloaded file works directly with

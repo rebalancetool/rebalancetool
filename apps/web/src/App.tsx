@@ -53,95 +53,113 @@ export function App() {
   };
 
   return (
-    <main className="app">
-      <header className="app-header">
-        <div>
-          <h1>Asset Allocation Rebalance Calculator</h1>
-          <p className="tagline">
-            Multi-account portfolio rebalancing. Everything runs in this page —
-            nothing is uploaded, and reloading clears it.
-          </p>
-        </div>
-        <div className="header-actions">
-          <button type="button" onClick={() => downloadScenario(scenario)}>
-            Download JSON
-          </button>
-          <button type="button" onClick={() => fileInput.current?.click()}>
-            Load JSON…
-          </button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".json,application/json"
-            aria-label="Load scenario JSON file"
-            className="visually-hidden"
-            onChange={(event) => {
-              void onFileChosen(event.target.files?.[0]);
-              event.target.value = ""; // so picking the same file again re-fires
-            }}
-          />
-          <button type="button" onClick={() => setScenario(demoScenario)}>
-            Load example
-          </button>
-          <button type="button" onClick={() => setScenario(emptyScenario())}>
-            Start empty
-          </button>
-          <div className="settings-anchor">
-            <button
-              type="button"
-              aria-expanded={settingsOpen}
-              onClick={() => setSettingsOpen((open) => !open)}
-            >
-              ⚙ Settings
-            </button>
-            {settingsOpen && (
-              <div
-                className="settings-popover"
-                role="dialog"
-                aria-label="Settings"
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setSettingsOpen(false);
-                }}
-              >
-                <OptionsEditor scenario={scenario} onChange={setScenario} />
-              </div>
-            )}
+    <div className="app">
+      <main>
+        <header className="app-header">
+          <div>
+            <h1>Asset Allocation Rebalance Calculator</h1>
+            <p className="tagline">
+              Multi-account portfolio rebalancing. Everything runs in this page —
+              nothing is uploaded, and reloading clears it.
+            </p>
           </div>
-        </div>
-      </header>
+          <div className="header-actions">
+            <button type="button" onClick={() => downloadScenario(scenario)}>
+              Download JSON
+            </button>
+            <button type="button" onClick={() => fileInput.current?.click()}>
+              Load JSON…
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".json,application/json"
+              aria-label="Load scenario JSON file"
+              className="visually-hidden"
+              onChange={(event) => {
+                void onFileChosen(event.target.files?.[0]);
+                event.target.value = ""; // so picking the same file again re-fires
+              }}
+            />
+            <button type="button" onClick={() => setScenario(demoScenario)}>
+              Load example
+            </button>
+            <button type="button" onClick={() => setScenario(emptyScenario())}>
+              Start empty
+            </button>
+            <div className="settings-anchor">
+              <button
+                type="button"
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+              >
+                ⚙ Settings
+              </button>
+              {settingsOpen && (
+                <div
+                  className="settings-popover"
+                  role="dialog"
+                  aria-label="Settings"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setSettingsOpen(false);
+                  }}
+                >
+                  <OptionsEditor scenario={scenario} onChange={setScenario} />
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
 
-      <label className="check-row taxable-guard">
-        <input
-          type="checkbox"
-          aria-label="Allow selling in taxable accounts"
-          checked={allowTaxableSells}
-          onChange={(event) => setScenario(withOptions(scenario, { sellInTaxableAccounts: event.target.checked }))}
-        />
-        <span>
-          Allow selling in taxable accounts
-          <span className="editor-hint">
-            Sells there can realize capital gains — uncheck to rebalance only tax-advantaged accounts by selling.
+        <label className="check-row taxable-guard">
+          <input
+            type="checkbox"
+            aria-label="Allow selling in taxable accounts"
+            checked={allowTaxableSells}
+            onChange={(event) => setScenario(withOptions(scenario, { sellInTaxableAccounts: event.target.checked }))}
+          />
+          <span>
+            Allow selling in taxable accounts
+            <span className="editor-hint">
+              Sells there can realize capital gains — uncheck to rebalance only tax-advantaged accounts by selling.
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
 
-      {fileError && (
-        <div className="card solve-error" role="alert">
-          <h3>Couldn’t load that file</h3>
-          <p>{fileError}</p>
-        </div>
-      )}
+        {fileError && (
+          <div className="card solve-error" role="alert">
+            <h3>Couldn’t load that file</h3>
+            <p>{fileError}</p>
+          </div>
+        )}
 
-      <PortfolioEditor scenario={scenario} onChange={setScenario} />
+        <PortfolioEditor scenario={scenario} onChange={setScenario} />
 
-      {outcome.result ? (
-        <ResultView scenario={scenario} result={outcome.result} />
-      ) : (
-        <div className="card solve-error" role="alert">
-          <h3>Can’t rebalance yet</h3>
-          <p>{outcome.error}</p>
-        </div>
-      )}
-    </main>
+        {outcome.result ? (
+          <ResultView scenario={scenario} result={outcome.result} />
+        ) : (
+          <div className="card solve-error" role="alert">
+            <h3>Can’t rebalance yet</h3>
+            <p>{outcome.error}</p>
+          </div>
+        )}
+      </main>
+
+      {/* Compliance disclaimer — this must stay visible on every layout. The
+          tool must present itself as impersonal arithmetic on user-supplied
+          inputs, never as personalized securities advice. */}
+      <footer className="app-footer">
+        <p>
+          <strong>This is a calculator, not investment advice.</strong> This tool performs arithmetic on
+          information you provide. You choose the asset classes, the target allocation, the funds, and which
+          accounts may hold them; the tool computes trades that move your stated holdings toward your stated
+          targets. It does not recommend any security, allocation, or strategy, and the example data shown
+          before you enter your own is illustrative only — not a suggested portfolio. Nothing here is
+          investment, tax, or legal advice. Consult a qualified professional before making investment
+          decisions.
+        </p>
+        <p>Your data stays in your browser and is never transmitted or stored by this site.</p>
+      </footer>
+    </div>
   );
 }
