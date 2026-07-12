@@ -643,6 +643,61 @@ describe("rebalance - core invariants", () => {
     expect(() => rebalance(portfolio, targets, { contributions: [] })).not.toThrow();
   });
 
+  it("handles ids containing spaces (LP model keys must not alias)", () => {
+    // account "a" + fund "b f" must never collide with account "a b" +
+    // fund "f" inside the LP model. Before cellKey, this trivially feasible
+    // portfolio crashed with 'LP allocation failed at stage "dev": infeasible'.
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "stocks", name: "Stocks" },
+        { id: "bonds", name: "Bonds" },
+      ],
+      funds: [
+        { id: "b f", name: "Fund b f", assetClasses: { stocks: 10000 } },
+        { id: "f", name: "Fund f", assetClasses: { bonds: 10000 } },
+      ],
+      accounts: [
+        { id: "a", name: "Account A", taxType: "tax_free", availableFundIds: ["b f"] },
+        { id: "a b", name: "Account AB", taxType: "tax_free", availableFundIds: ["f"] },
+      ],
+      holdings: [
+        { accountId: "a", fundId: "b f", value: 100000 },
+        { accountId: "a b", fundId: "f", value: 100000 },
+      ],
+    };
+    const targets: Target[] = [
+      { assetClassId: "stocks", weight: 5000 },
+      { assetClassId: "bonds", weight: 5000 },
+    ];
+    const result = rebalance(portfolio, targets, {
+      contributions: [
+        { accountId: "a", amount: 50000 },
+        { accountId: "a b", amount: 50000 },
+      ],
+    });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "a", fundId: "b f", action: "buy", amount: 50000 },
+      { accountId: "a b", fundId: "f", action: "buy", amount: 50000 },
+    ]);
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+  });
+
+  it("rejects empty or whitespace-only ids", () => {
+    const portfolio: Portfolio = {
+      assetClasses: [{ id: "stocks", name: "Stocks" }],
+      funds: [{ id: " ", name: "VTI", assetClasses: { stocks: 10000 } }],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: [" "] }],
+      holdings: [],
+    };
+    const targets: Target[] = [{ assetClassId: "stocks", weight: 10000 }];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(/Fund ids must be non-empty/);
+  });
+
   it("rejects duplicate asset-class and account names, case-insensitively", () => {
     const targets: Target[] = [
       { assetClassId: "a", weight: 10000 },
