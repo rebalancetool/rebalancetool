@@ -16,7 +16,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { TOTAL_BPS } from "@rebalancer/solver";
-import type { Scenario, TaxPreference, TaxType } from "@rebalancer/solver";
+import type { Fund, Scenario, TaxPreference, TaxType } from "@rebalancer/solver";
 import { useState } from "react";
 import { formatBpsAsPercent } from "./format.ts";
 import { MoneyInput, PercentInput } from "./inputs.tsx";
@@ -24,11 +24,17 @@ import {
   addAccount,
   addAssetClass,
   addFund,
+  addFundClass,
+  fundWeightTotal,
   removeAccount,
   removeAssetClass,
   removeFund,
+  removeFundClass,
   reorderFundPreference,
+  replaceFundClass,
   setFundAvailability,
+  setFundClassWeight,
+  setFundSoleClass,
   targetWeightTotal,
   updateAccount,
   updateAssetClass,
@@ -177,55 +183,183 @@ function AssetClassesCard({ scenario, onChange }: EditorProps) {
   );
 }
 
-function FundsCard({ scenario, onChange }: EditorProps) {
-  const { assetClasses, funds } = scenario.portfolio;
-  const [newFundClassId, setNewFundClassId] = useState("");
-  const effectiveNewClassId = assetClasses.some((c) => c.id === newFundClassId)
-    ? newFundClassId
-    : (assetClasses[0]?.id ?? "");
+/** Sentinel option in a fund's class picker for switching it to a multi-class blend. */
+const BLEND = "__blend__";
+
+/**
+ * "65% US Stocks · 35% International Stocks" — a blend at a glance, largest
+ * slice first.
+ */
+function blendSummary(fund: Fund, classNames: Map<string, string>): string {
+  return Object.entries(fund.assetClasses)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([classId, weight]) => `${formatBpsAsPercent(weight)} ${classNames.get(classId) ?? classId}`)
+    .join(" · ");
+}
+
+/**
+ * The expanded slice-by-slice editor for one fund's blend: each slice is a
+ * class picker plus its weight, with a live "must total 100%" check and an
+ * add picker for the classes not yet in the blend.
+ */
+function BlendEditor({ scenario, onChange, fund, label }: EditorProps & { fund: Fund; label: string }) {
+  const { assetClasses } = scenario.portfolio;
+  const classNames = new Map(assetClasses.map((c) => [c.id, c.name]));
+  const slices = Object.entries(fund.assetClasses);
+  const addable = assetClasses.filter((c) => !(c.id in fund.assetClasses));
+  const total = fundWeightTotal(fund);
   return (
-    <div className="card editor-card">
-      <h3>Funds</h3>
-      <p className="editor-hint">Everything you hold or could buy, tagged with its asset class.</p>
-      {funds.map((fund) => (
-        <div className="field-row" key={fund.id}>
-          <input
-            type="text"
-            className="ticker-input"
-            aria-label={`Ticker for fund ${fund.id}`}
-            placeholder="Ticker"
-            value={fund.ticker ?? ""}
-            onChange={(event) => onChange(updateFund(scenario, fund.id, { ticker: event.target.value }))}
-          />
-          <input
-            type="text"
-            aria-label={`Name for fund ${fund.id}`}
-            placeholder="Full name (optional)"
-            value={fund.name}
-            onChange={(event) => onChange(updateFund(scenario, fund.id, { name: event.target.value }))}
-          />
+    <div className="blend-editor">
+      {slices.map(([classId, weight]) => (
+        <div className="blend-row" key={classId}>
           <select
-            aria-label={`Asset class for fund ${fund.ticker || fund.id}`}
-            value={fund.assetClassId}
-            onChange={(event) => onChange(updateFund(scenario, fund.id, { assetClassId: event.target.value }))}
+            aria-label={`Class of the ${classNames.get(classId) ?? classId} slice in ${label}`}
+            value={classId}
+            onChange={(event) => onChange(replaceFundClass(scenario, fund.id, classId, event.target.value))}
           >
-            {assetClasses.map((assetClass) => (
+            <option value={classId}>{classNames.get(classId) ?? classId}</option>
+            {addable.map((assetClass) => (
               <option key={assetClass.id} value={assetClass.id}>
                 {assetClass.name}
               </option>
             ))}
           </select>
+          <PercentInput
+            bps={weight}
+            onBps={(w) => onChange(setFundClassWeight(scenario, fund.id, classId, w))}
+            label={`Weight of ${classNames.get(classId) ?? classId} in ${label}`}
+          />
           <button
             type="button"
             className="remove-button"
-            aria-label={`Remove fund ${fund.ticker || fund.id}`}
-            title="Removes this fund and its holdings"
-            onClick={() => onChange(removeFund(scenario, fund.id))}
+            aria-label={`Remove ${classNames.get(classId) ?? classId} from ${label}`}
+            title="Removes this slice (a last remaining slice can't be removed)"
+            disabled={slices.length === 1}
+            onClick={() => onChange(removeFundClass(scenario, fund.id, classId))}
           >
             ✕
           </button>
         </div>
       ))}
+      <div className="blend-row blend-row-footer">
+        {addable.length > 0 ? (
+          <select
+            aria-label={`Add asset class to ${label}`}
+            value=""
+            onChange={(event) => {
+              if (event.target.value) onChange(addFundClass(scenario, fund.id, event.target.value));
+            }}
+          >
+            <option value="">＋ Add class…</option>
+            {addable.map((assetClass) => (
+              <option key={assetClass.id} value={assetClass.id}>
+                {assetClass.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span />
+        )}
+        <span className={`blend-total ${total === TOTAL_BPS ? "total-ok" : "total-bad"}`}>
+          blend total <span className="num">{formatBpsAsPercent(total)}</span>
+          {total !== TOTAL_BPS && " — must total 100%"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function FundsCard({ scenario, onChange }: EditorProps) {
+  const { assetClasses, funds } = scenario.portfolio;
+  const [newFundClassId, setNewFundClassId] = useState("");
+  // Fund ids whose blend editor is open. A single-class fund lands here by
+  // picking "Blend of classes…" in its class picker; a real blend shows a
+  // summary that toggles membership. Purely view state — no scenario change.
+  const [openBlends, setOpenBlends] = useState<Set<string>>(new Set());
+  const classNames = new Map(assetClasses.map((c) => [c.id, c.name]));
+  const effectiveNewClassId = assetClasses.some((c) => c.id === newFundClassId)
+    ? newFundClassId
+    : (assetClasses[0]?.id ?? "");
+  const setBlendOpen = (fundId: string, open: boolean) =>
+    setOpenBlends((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(fundId);
+      else next.delete(fundId);
+      return next;
+    });
+  return (
+    <div className="card editor-card">
+      <h3>Funds</h3>
+      <p className="editor-hint">
+        Everything you hold or could buy, tagged with its asset class — or a blend of classes (e.g. VT is 65% US /
+        35% international).
+      </p>
+      {funds.map((fund) => {
+        const label = fund.ticker || fund.name || fund.id;
+        const slices = Object.entries(fund.assetClasses);
+        const isBlend = slices.length > 1;
+        const expanded = openBlends.has(fund.id);
+        return (
+          <div className="fund-block" key={fund.id}>
+            <div className="field-row">
+              <input
+                type="text"
+                className="ticker-input"
+                aria-label={`Ticker for fund ${fund.id}`}
+                placeholder="Ticker"
+                value={fund.ticker ?? ""}
+                onChange={(event) => onChange(updateFund(scenario, fund.id, { ticker: event.target.value }))}
+              />
+              <input
+                type="text"
+                aria-label={`Name for fund ${fund.id}`}
+                placeholder="Full name (optional)"
+                value={fund.name}
+                onChange={(event) => onChange(updateFund(scenario, fund.id, { name: event.target.value }))}
+              />
+              {isBlend || expanded ? (
+                <button
+                  type="button"
+                  className="blend-summary"
+                  aria-label={`Asset class blend for ${label}`}
+                  aria-expanded={expanded}
+                  title={expanded ? "Collapse the blend editor" : "Edit this fund's class blend"}
+                  onClick={() => setBlendOpen(fund.id, !expanded)}
+                >
+                  <span className="blend-summary-text">{blendSummary(fund, classNames)}</span>
+                  <span aria-hidden="true">{expanded ? "▴" : "▾"}</span>
+                </button>
+              ) : (
+                <select
+                  aria-label={`Asset class for fund ${label}`}
+                  value={slices[0]?.[0] ?? ""}
+                  onChange={(event) => {
+                    if (event.target.value === BLEND) setBlendOpen(fund.id, true);
+                    else onChange(setFundSoleClass(scenario, fund.id, event.target.value));
+                  }}
+                >
+                  {assetClasses.map((assetClass) => (
+                    <option key={assetClass.id} value={assetClass.id}>
+                      {assetClass.name}
+                    </option>
+                  ))}
+                  <option value={BLEND}>Blend of classes…</option>
+                </select>
+              )}
+              <button
+                type="button"
+                className="remove-button"
+                aria-label={`Remove fund ${label}`}
+                title="Removes this fund and its holdings"
+                onClick={() => onChange(removeFund(scenario, fund.id))}
+              >
+                ✕
+              </button>
+            </div>
+            {expanded && <BlendEditor scenario={scenario} onChange={onChange} fund={fund} label={label} />}
+          </div>
+        );
+      })}
       <AddRow
         placeholder="New fund ticker"
         buttonLabel="Add fund"

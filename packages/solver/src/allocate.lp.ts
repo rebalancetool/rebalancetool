@@ -1,30 +1,49 @@
 import { solve } from "yalps";
 import type { Constraint, Model } from "yalps";
 import { isTaxAdvantaged, taxTypeRank } from "./allocate.ts";
-import type { Allocation, AllocationWarning, ProblemAccount, ProblemAssetClass, TransportationProblem } from "./allocate.ts";
+import type {
+  Allocation,
+  AllocationWarning,
+  ProblemAccount,
+  ProblemFund,
+  TransportationProblem,
+} from "./allocate.ts";
+import { TOTAL_BPS } from "./types.ts";
 
 /**
- * LP-backed allocate(): the drop-in alternative to the greedy waterfall,
- * behind the same TransportationProblem seam. Solves the placement as a
- * linear program (YALPS — pure JS, synchronous, no I/O) with a
+ * LP-backed allocate(): the default engine, behind the same
+ * TransportationProblem seam as the greedy waterfall. The decision variables
+ * are the final cents per (account × fund) — not per asset class — so a
+ * blended fund (VT = 65% US + 35% intl) is handled natively: buying or
+ * selling it moves every component in lockstep, and each asset class's
+ * exposure is the weight-scaled sum over every fund that contains it.
+ * Solved as a linear program (YALPS — pure JS, synchronous, no I/O) with a
  * lexicographic objective, each stage pinned as a constraint before the
  * next runs:
  *
- *   1. minimize total deviation beyond the tolerance band,
+ *   1. minimize total class deviation beyond the tolerance band,
  *   2. minimize total dollars sold (never churn more than needed),
  *   3. minimize dollars sold in taxable accounts,
- *   4. maximize dollars placed in tax-preferred accounts.
+ *   4. maximize dollars placed in tax-preferred accounts,
+ *   5. steer residual freedom by fund preference (buys go to an account's
+ *      earliest availableFundIds entry, sells drain the latest — with sells
+ *      already pinned minimal, this stage can only pick *which* fund, never
+ *      add churn).
  *
  * Hard constraints: each account's total is fixed (money never leaves an
  * account), non-buyable positions can't grow, sells respect the caller's
  * caps, and no asset class's total may drop below min(current, target) —
- * the same never-sell-below-target guarantee the greedy pass makes.
+ * the same never-sell-below-target guarantee the greedy pass makes. For a
+ * blended fund that floor binds the *class* exposure, so selling a blend is
+ * allowed exactly when every component stays above its own floor.
  *
  * The tolerance band works exactly like the greedy allocator's: it is an
  * *eligibility* test on the inputs, not a stopping zone. A class whose
  * initial drift exceeds the band is penalized against its exact target
  * (fix fully); a class already within the band is frozen against selling
  * and carries no penalty (never churned, but free to absorb surplus cash).
+ * Class drift is measured exactly, in integer cent-basis-points, before any
+ * float enters the picture.
  *
  * minTradeCents is honored by iterative refinement (a "0 or ≥ threshold"
  * sell is not expressible in a single LP): solve, ban selling any position
@@ -36,9 +55,8 @@ import type { Allocation, AllocationWarning, ProblemAccount, ProblemAssetClass, 
  * are snapped back to exactly their current value — so rounding noise never
  * fabricates a one-cent trade — and a per-account largest-remainder repair
  * rounds the rest to integer cents, exactly conserving every account
- * total. Unlike the greedy allocator, leftover cash is placed wherever the
- * objective likes best (never emitting a leftover_cash warning), and
- * equally-optimal placements may differ from the greedy waterfall's.
+ * total. Class totals can carry < 1 cent of noise per position, which the
+ * property tests carry as explicit slack.
  *
  * Determinism: the model is built in sorted id order and YALPS's simplex is
  * deterministic, so shuffled inputs produce the identical model and result.
@@ -67,12 +85,19 @@ const PIN_EPSILON = 1e-3;
 /** Relative slack on lexicographic pins, for objectives at large dollar magnitudes. */
 const PIN_RELATIVE = 1e-9;
 
+/**
+ * Subtracted from class-floor constraints. A blend's class exposure is
+ * Σ x·(weight/TOTAL_BPS) in floats, which can land a whisper below the
+ * exactly-computed integer floor even for the do-nothing solution; the
+ * slack is a thousandth of a cent, far too small to admit a real trade.
+ */
+const FLOOR_EPSILON = 1e-3;
+
 export function allocateLp(problem: TransportationProblem): Allocation {
   const accounts = [...problem.accounts].sort((a, b) => a.id.localeCompare(b.id));
-  const assetClasses = [...problem.assetClasses].sort((a, b) => a.id.localeCompare(b.id));
+  const funds = [...problem.funds].sort((a, b) => a.id.localeCompare(b.id));
 
-  const held = (accountId: string, assetClassId: string): number =>
-    problem.current.get(accountId)?.get(assetClassId) ?? 0;
+  const held = (accountId: string, fundId: string): number => problem.current.get(accountId)?.get(fundId) ?? 0;
 
   // Iterative refinement for minTradeCents: any position whose sell comes
   // out positive but below the floor gets selling banned outright, and the
@@ -81,14 +106,14 @@ export function allocateLp(problem: TransportationProblem): Allocation {
   const bannedSells = new Set<string>();
   let finalValues: Map<string, number>;
   for (;;) {
-    finalValues = solveLexicographic(problem, accounts, assetClasses, bannedSells);
+    finalValues = solveLexicographic(problem, accounts, funds, bannedSells);
     if (problem.minTradeCents <= 0) break;
     let bannedThisPass = false;
     for (const account of accounts) {
-      for (const assetClass of assetClasses) {
-        const key = `${account.id} ${assetClass.id}`;
+      for (const fund of funds) {
+        const key = `${account.id} ${fund.id}`;
         if (bannedSells.has(key)) continue;
-        const sold = held(account.id, assetClass.id) - (finalValues.get(`x ${key}`) ?? 0);
+        const sold = held(account.id, fund.id) - (finalValues.get(`x ${key}`) ?? 0);
         if (sold > HALF_CENT && sold < problem.minTradeCents - HALF_CENT) {
           bannedSells.add(key);
           bannedThisPass = true;
@@ -105,25 +130,25 @@ export function allocateLp(problem: TransportationProblem): Allocation {
   const x = new Map<string, Map<string, number>>();
   for (const account of accounts) {
     let target = problem.cash.get(account.id) ?? 0;
-    for (const assetClass of assetClasses) target += held(account.id, assetClass.id);
+    for (const fund of funds) target += held(account.id, fund.id);
 
-    const cells = assetClasses
-      .filter((assetClass) => finalValues.has(`x ${account.id} ${assetClass.id}`) || held(account.id, assetClass.id) > 0)
-      .map((assetClass) => {
-        const current = held(account.id, assetClass.id);
-        const raw = Math.max(0, finalValues.get(`x ${account.id} ${assetClass.id}`) ?? current);
+    const cells = funds
+      .filter((fund) => finalValues.has(`x ${account.id} ${fund.id}`) || held(account.id, fund.id) > 0)
+      .map((fund) => {
+        const current = held(account.id, fund.id);
+        const raw = Math.max(0, finalValues.get(`x ${account.id} ${fund.id}`) ?? current);
         const snapped = Math.abs(raw - current) < HALF_CENT;
         const value = snapped ? current : Math.floor(raw + FLOOR_GUARD);
-        const sellCap = bannedSells.has(`${account.id} ${assetClass.id}`)
+        const sellCap = bannedSells.has(`${account.id} ${fund.id}`)
           ? 0
-          : Math.max(0, Math.min(current, problem.sellable(account.id, assetClass.id)));
+          : Math.max(0, Math.min(current, problem.sellable(account.id, fund.id)));
         return {
-          assetClassId: assetClass.id,
+          fundId: fund.id,
           value,
           remainder: snapped ? -1 : raw - value,
           snapped,
           lowerBound: current - sellCap,
-          upperBound: problem.buyable(account.id, assetClass.id) ? Number.MAX_SAFE_INTEGER : current,
+          upperBound: problem.buyable(account.id, fund.id) ? Number.MAX_SAFE_INTEGER : current,
         };
       });
 
@@ -132,10 +157,10 @@ export function allocateLp(problem: TransportationProblem): Allocation {
     // adding, smallest first when removing); snapped cells only as a last
     // resort so noise never fabricates a trade.
     const addOrder = [...cells].sort(
-      (a, b) => Number(a.snapped) - Number(b.snapped) || b.remainder - a.remainder || a.assetClassId.localeCompare(b.assetClassId),
+      (a, b) => Number(a.snapped) - Number(b.snapped) || b.remainder - a.remainder || a.fundId.localeCompare(b.fundId),
     );
     const removeOrder = [...cells].sort(
-      (a, b) => Number(a.snapped) - Number(b.snapped) || a.remainder - b.remainder || a.assetClassId.localeCompare(b.assetClassId),
+      (a, b) => Number(a.snapped) - Number(b.snapped) || a.remainder - b.remainder || a.fundId.localeCompare(b.fundId),
     );
     while (leftover !== 0) {
       const order = leftover > 0 ? addOrder : removeOrder;
@@ -159,118 +184,161 @@ export function allocateLp(problem: TransportationProblem): Allocation {
 
     const row = new Map<string, number>();
     for (const cell of cells) {
-      if (cell.value !== 0 || held(account.id, cell.assetClassId) !== 0) row.set(cell.assetClassId, cell.value);
+      if (cell.value !== 0 || held(account.id, cell.fundId) !== 0) row.set(cell.fundId, cell.value);
     }
     x.set(account.id, row);
   }
 
   // Same warning contract as the greedy allocator: gaps beyond the band
-  // that survived, largest first. (leftover_cash never applies here — the
-  // objective, not a fallback rule, decides where surplus cash lands.)
+  // that survived, largest first. Class exposure is computed exactly in
+  // integer cent-basis-points from the rounded fund values. (leftover_cash
+  // never applies here — the objective, not a fallback rule, decides where
+  // surplus cash lands.)
+  const finalCentBps = new Map<string, number>();
+  for (const assetClass of problem.assetClasses) finalCentBps.set(assetClass.id, 0);
+  for (const account of accounts) {
+    for (const fund of funds) {
+      const value = x.get(account.id)!.get(fund.id) ?? 0;
+      if (value === 0) continue;
+      for (const [classId, weight] of fund.weights) {
+        finalCentBps.set(classId, (finalCentBps.get(classId) ?? 0) + value * weight);
+      }
+    }
+  }
   const warnings: AllocationWarning[] = [];
-  const unreachable = assetClasses
+  const unreachable = [...problem.assetClasses]
     .map((assetClass) => {
-      let total = 0;
-      for (const account of accounts) total += x.get(account.id)!.get(assetClass.id) ?? 0;
-      return { assetClassId: assetClass.id, remainingGap: (problem.demands.get(assetClass.id) ?? 0) - total };
+      const gapCentBps = (problem.demands.get(assetClass.id) ?? 0) * TOTAL_BPS - (finalCentBps.get(assetClass.id) ?? 0);
+      return { assetClassId: assetClass.id, gapCentBps };
     })
-    .filter((entry) => entry.remainingGap > problem.toleranceCents)
-    .sort((a, b) => b.remainingGap - a.remainingGap || a.assetClassId.localeCompare(b.assetClassId));
-  for (const { assetClassId, remainingGap } of unreachable) {
-    warnings.push({ kind: "unreachable_gap", assetClassId, remainingGap });
+    .filter((entry) => entry.gapCentBps > problem.toleranceCents * TOTAL_BPS)
+    .sort((a, b) => b.gapCentBps - a.gapCentBps || a.assetClassId.localeCompare(b.assetClassId));
+  for (const { assetClassId, gapCentBps } of unreachable) {
+    warnings.push({ kind: "unreachable_gap", assetClassId, remainingGap: Math.round(gapCentBps / TOTAL_BPS) });
   }
 
   return { x, warnings };
 }
 
-/** Builds the model (with the given positions banned from selling) and runs the four pinned stages. */
+/** Builds the model (with the given positions banned from selling) and runs the five pinned stages. */
 function solveLexicographic(
   problem: TransportationProblem,
   accounts: ProblemAccount[],
-  assetClasses: ProblemAssetClass[],
+  funds: ProblemFund[],
   bannedSells: Set<string>,
 ): Map<string, number> {
-  const held = (accountId: string, assetClassId: string): number =>
-    problem.current.get(accountId)?.get(assetClassId) ?? 0;
+  const held = (accountId: string, fundId: string): number => problem.current.get(accountId)?.get(fundId) ?? 0;
   const demand = (assetClassId: string): number => problem.demands.get(assetClassId) ?? 0;
+  const assetClasses = [...problem.assetClasses].sort((a, b) => a.id.localeCompare(b.id));
+  const taxPreferenceByClass = new Map(assetClasses.map((c) => [c.id, c.taxPreference]));
 
   const constraints = new Map<string, Constraint>();
   const variables = new Map<string, Map<string, number>>();
   let hasSells = false;
   let hasPreferences = false;
+  let hasFundPreferences = false;
 
   // Band as eligibility, computed from the inputs (mirrors the greedy
   // allocator): a class drifted beyond the band is "active" and penalized
   // against its exact target; a class within the band is left alone —
-  // no penalty, but its total may never shrink.
+  // no penalty, but its total may never shrink. Exposures are exact
+  // integers in cent-basis-points (cents × weight), so the test never
+  // depends on float noise.
+  const currentCentBps = new Map<string, number>();
+  for (const assetClass of assetClasses) currentCentBps.set(assetClass.id, 0);
+  for (const account of accounts) {
+    for (const fund of funds) {
+      const value = held(account.id, fund.id);
+      if (value === 0) continue;
+      for (const [classId, weight] of fund.weights) {
+        currentCentBps.set(classId, (currentCentBps.get(classId) ?? 0) + value * weight);
+      }
+    }
+  }
   const active = new Map<string, boolean>();
   for (const assetClass of assetClasses) {
-    let currentTotal = 0;
-    for (const account of accounts) currentTotal += held(account.id, assetClass.id);
-    active.set(assetClass.id, Math.abs(currentTotal - demand(assetClass.id)) > problem.toleranceCents);
+    const driftCentBps = Math.abs((currentCentBps.get(assetClass.id) ?? 0) - demand(assetClass.id) * TOTAL_BPS);
+    active.set(assetClass.id, driftCentBps > problem.toleranceCents * TOTAL_BPS);
   }
 
-  // x variables: final cents per (account, class) the account can hold.
+  // x variables: final cents per (account, fund) the account can hold. Every
+  // class-level constraint sees the variable through the fund's weights.
   for (const account of accounts) {
     let total = problem.cash.get(account.id) ?? 0;
-    for (const assetClass of assetClasses) total += held(account.id, assetClass.id);
+    for (const fund of funds) total += held(account.id, fund.id);
     constraints.set(`acct ${account.id}`, { equal: total });
 
-    for (const assetClass of assetClasses) {
-      const current = held(account.id, assetClass.id);
-      const buyable = problem.buyable(account.id, assetClass.id);
+    for (const fund of funds) {
+      const current = held(account.id, fund.id);
+      const buyable = problem.buyable(account.id, fund.id);
       if (current === 0 && !buyable) continue; // x is identically zero
 
       const coefficients = new Map<string, number>();
       coefficients.set(`acct ${account.id}`, 1);
-      if (active.get(assetClass.id)) {
-        coefficients.set(`devhi ${assetClass.id}`, 1);
-        coefficients.set(`devlo ${assetClass.id}`, 1);
+      let preferredFraction = 0;
+      for (const [classId, weight] of fund.weights) {
+        const fraction = weight / TOTAL_BPS;
+        if (active.get(classId)) {
+          coefficients.set(`devhi ${classId}`, fraction);
+          coefficients.set(`devlo ${classId}`, fraction);
+        }
+        coefficients.set(`floor ${classId}`, fraction);
+        const preference = taxPreferenceByClass.get(classId) ?? "neutral";
+        if (preference !== "neutral" && taxTypeRank(preference, account.taxType) === 0) {
+          preferredFraction += fraction;
+        }
       }
-      coefficients.set(`floor ${assetClass.id}`, 1);
       if (!buyable) {
-        constraints.set(`ub ${account.id} ${assetClass.id}`, { max: current });
-        coefficients.set(`ub ${account.id} ${assetClass.id}`, 1);
+        constraints.set(`ub ${account.id} ${fund.id}`, { max: current });
+        coefficients.set(`ub ${account.id} ${fund.id}`, 1);
       }
-      const sellCap = bannedSells.has(`${account.id} ${assetClass.id}`)
+      const sellCap = bannedSells.has(`${account.id} ${fund.id}`)
         ? 0
-        : Math.max(0, Math.min(current, problem.sellable(account.id, assetClass.id)));
+        : Math.max(0, Math.min(current, problem.sellable(account.id, fund.id)));
       if (current - sellCap > 0) {
-        constraints.set(`lb ${account.id} ${assetClass.id}`, { min: current - sellCap });
-        coefficients.set(`lb ${account.id} ${assetClass.id}`, 1);
+        constraints.set(`lb ${account.id} ${fund.id}`, { min: current - sellCap });
+        coefficients.set(`lb ${account.id} ${fund.id}`, 1);
       }
       if (sellCap > 0) {
         // s >= current − x measures dollars sold out of this position.
         hasSells = true;
-        constraints.set(`sold ${account.id} ${assetClass.id}`, { min: current });
-        coefficients.set(`sold ${account.id} ${assetClass.id}`, 1);
+        constraints.set(`sold ${account.id} ${fund.id}`, { min: current });
+        coefficients.set(`sold ${account.id} ${fund.id}`, 1);
         const slack = new Map<string, number>();
-        slack.set(`sold ${account.id} ${assetClass.id}`, 1);
+        slack.set(`sold ${account.id} ${fund.id}`, 1);
         slack.set("sells", 1);
         if (!isTaxAdvantaged(account.taxType)) slack.set("taxsells", 1);
-        variables.set(`s ${account.id} ${assetClass.id}`, slack);
+        variables.set(`s ${account.id} ${fund.id}`, slack);
       }
-      if (assetClass.taxPreference !== "neutral" && taxTypeRank(assetClass.taxPreference, account.taxType) === 0) {
+      if (preferredFraction > 0) {
         hasPreferences = true;
-        coefficients.set("pref", 1);
+        coefficients.set("pref", preferredFraction);
       }
-      variables.set(`x ${account.id} ${assetClass.id}`, coefficients);
+      const rank = problem.preferenceRank(account.id, fund.id);
+      if (rank > 0) {
+        hasFundPreferences = true;
+        coefficients.set("fundpref", rank);
+      }
+      variables.set(`x ${account.id} ${fund.id}`, coefficients);
     }
   }
 
   // Class-level constraints: active classes get deviation slacks measured
-  // from the exact target; within-band classes just may never shrink.
+  // from the exact target; within-band classes just may never shrink. The
+  // FLOOR_EPSILON keeps float summation of weight fractions from declaring
+  // the do-nothing solution infeasible by a millionth of a cent.
   for (const assetClass of assetClasses) {
-    let currentTotal = 0;
-    for (const account of accounts) currentTotal += held(account.id, assetClass.id);
+    const currentCents = (currentCentBps.get(assetClass.id) ?? 0) / TOTAL_BPS;
     if (active.get(assetClass.id)) {
       constraints.set(`devhi ${assetClass.id}`, { max: demand(assetClass.id) });
       constraints.set(`devlo ${assetClass.id}`, { min: demand(assetClass.id) });
-      constraints.set(`floor ${assetClass.id}`, { min: Math.min(currentTotal, demand(assetClass.id)) });
+      constraints.set(`floor ${assetClass.id}`, {
+        min: Math.min(currentCents, demand(assetClass.id)) - FLOOR_EPSILON,
+      });
       variables.set(`over ${assetClass.id}`, new Map([[`devhi ${assetClass.id}`, -1], ["dev", 1]]));
       variables.set(`under ${assetClass.id}`, new Map([[`devlo ${assetClass.id}`, 1], ["dev", 1]]));
     } else {
-      constraints.set(`floor ${assetClass.id}`, { min: currentTotal });
+      constraints.set(`floor ${assetClass.id}`, { min: currentCents - FLOOR_EPSILON });
     }
   }
 
@@ -280,6 +348,7 @@ function solveLexicographic(
     { objective: "sells", direction: "minimize", active: hasSells },
     { objective: "taxsells", direction: "minimize", active: hasSells },
     { objective: "pref", direction: "maximize", active: hasPreferences },
+    { objective: "fundpref", direction: "minimize", active: hasFundPreferences },
   ];
 
   let finalValues = new Map<string, number>();

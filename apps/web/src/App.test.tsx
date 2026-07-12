@@ -90,7 +90,7 @@ test("uploading a scenario JSON file replaces the state", async () => {
   const uploaded = {
     portfolio: {
       assetClasses: [{ id: "stocks", name: "Stocks" }],
-      funds: [{ id: "swtsx", ticker: "SWTSX", name: "Schwab Total Stock Market", assetClassId: "stocks" }],
+      funds: [{ id: "swtsx", ticker: "SWTSX", name: "Schwab Total Stock Market", assetClasses: { "stocks": 10000 } }],
       accounts: [
         { id: "solo401k", name: "Solo 401(k)", taxType: "tax_deferred" as const, availableFundIds: ["swtsx"] },
       ],
@@ -132,10 +132,68 @@ test("removing a fund from an account clears its menu entry and holding, and it 
 
   expect(screen.queryByLabelText("Current value of VXUS in Taxable Brokerage")).not.toBeInTheDocument();
   expect(within(addPicker()).getByRole("option", { name: /VXUS/ })).toBeInTheDocument();
-  // The holding is gone too: International Stocks now has no current value anywhere.
+  // The holding is gone too: all that remains of International Stocks is the
+  // 35% slice of the HSA's $2,000 VT blend.
   const allocation = screen.getByRole("region", { name: "Portfolio by asset class" });
   const intlRow = within(allocation).getByRole("row", { name: /International Stocks/ });
-  expect(within(intlRow).getAllByText("$0.00").length).toBeGreaterThan(0);
+  expect(within(intlRow).getAllByText("$700.00").length).toBeGreaterThan(0);
+});
+
+test("the demo's VT blend is summarized in the Funds card and editable slice by slice", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  // Collapsed: a summary button, largest slice first.
+  const summary = screen.getByRole("button", { name: "Asset class blend for VT" });
+  expect(summary).toHaveTextContent("65% US Stocks · 35% International Stocks");
+
+  await user.click(summary);
+  const usWeight = screen.getByLabelText("Weight of US Stocks in VT");
+  expect(usWeight).toHaveValue("65");
+
+  // Nudge the split to 60/40 and watch the summary follow.
+  await user.clear(usWeight);
+  await user.type(usWeight, "60");
+  await user.clear(screen.getByLabelText("Weight of International Stocks in VT"));
+  await user.type(screen.getByLabelText("Weight of International Stocks in VT"), "40");
+  expect(screen.getByRole("button", { name: "Asset class blend for VT" })).toHaveTextContent(
+    "60% US Stocks · 40% International Stocks",
+  );
+});
+
+test("a single-class fund becomes a blend through the 'Blend of classes…' picker", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  // VTI starts as a plain class dropdown; choosing the blend option opens
+  // the slice editor without changing the data (100% US Stocks).
+  await user.selectOptions(screen.getByLabelText("Asset class for fund VTI"), "__blend__");
+  expect(screen.getByLabelText("Weight of US Stocks in VTI")).toHaveValue("100");
+
+  // Add a bonds slice; it pre-fills with the weight missing from 100% —
+  // zero here, which renders as an empty field like every zero amount.
+  await user.selectOptions(screen.getByLabelText("Add asset class to VTI"), "us_bonds");
+  const bondsWeight = screen.getByLabelText("Weight of US Bonds in VTI");
+  expect(bondsWeight).toHaveValue("");
+
+  // An off-100% blend total is flagged, and the solver refuses in place.
+  await user.clear(bondsWeight);
+  await user.type(bondsWeight, "10");
+  expect(screen.getByText(/blend total/)).toHaveTextContent("must total 100%");
+  expect(screen.getByRole("alert")).toHaveTextContent("Can’t rebalance yet");
+
+  // Fix the US slice to 90% and results come back.
+  const usWeight = screen.getByLabelText("Weight of US Stocks in VTI");
+  await user.clear(usWeight);
+  await user.type(usWeight, "90");
+  expect(screen.queryByText("Can’t rebalance yet")).not.toBeInTheDocument();
+
+  // Removing the bonds slice bumps US back to 100% and the row collapses
+  // back to a plain dropdown once the editor is closed.
+  await user.click(screen.getByLabelText("Remove US Bonds from VTI"));
+  expect(screen.getByLabelText("Weight of US Stocks in VTI")).toHaveValue("100");
+  await user.click(screen.getByRole("button", { name: "Asset class blend for VTI" }));
+  expect(screen.getByLabelText("Asset class for fund VTI")).toHaveValue("us_stocks");
 });
 
 test("fund preference order can be changed from the drag handle's keyboard mode", async () => {

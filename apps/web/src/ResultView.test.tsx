@@ -18,8 +18,8 @@ const scenario: Scenario = {
       { id: "us_bonds", name: "US Bonds" },
     ],
     funds: [
-      { id: "vti", ticker: "VTI", name: "Vanguard Total Stock Market ETF", assetClassId: "us_stocks" },
-      { id: "bnd", ticker: "BND", name: "Vanguard Total Bond Market ETF", assetClassId: "us_bonds" },
+      { id: "vti", ticker: "VTI", name: "Vanguard Total Stock Market ETF", assetClasses: { "us_stocks": 10000 } },
+      { id: "bnd", ticker: "BND", name: "Vanguard Total Bond Market ETF", assetClasses: { "us_bonds": 10000 } },
     ],
     accounts: [{ id: "ira", name: "Traditional IRA", taxType: "tax_deferred", availableFundIds: ["vti", "bnd"] }],
     holdings: [

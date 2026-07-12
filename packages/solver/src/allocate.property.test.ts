@@ -62,26 +62,21 @@ describe.each([
           // Cash must be investable somewhere, or rebalance() would have
           // rejected the input before allocate() ever ran.
           if (cash > 0 && !buyableFlags.some(Boolean)) buyableFlags[0] = true;
-          const fallbackIndex = buyableFlags.findIndex(Boolean);
 
           const total = holdings.reduce((s, v) => s + v, 0) + cash;
           const demands = threeWaySplit(total, cutSeedA, cutSeedB);
 
           const problem: TransportationProblem = {
-            accounts: [
-              {
-                id: "acct",
-                taxType: "tax_free",
-                fallbackAssetClassId: fallbackIndex === -1 ? undefined : CLASS_IDS[fallbackIndex],
-              },
-            ],
+            accounts: [{ id: "acct", taxType: "tax_free" }],
             assetClasses: CLASS_IDS.map((id) => ({ id, taxPreference: "neutral" })),
+            funds: CLASS_IDS.map((id) => ({ id, weights: new Map([[id, 10000]]) })),
             cash: new Map([["acct", cash]]),
             demands: new Map(CLASS_IDS.map((id, i) => [id, demands[i]!])),
             current: new Map([["acct", new Map(CLASS_IDS.map((id, i) => [id, holdings[i]!]))]]),
-            buyable: (_accountId, assetClassId) => buyableFlags[CLASS_IDS.indexOf(assetClassId as never)]!,
-            sellable: (_accountId, assetClassId) =>
-              sellableFlags[CLASS_IDS.indexOf(assetClassId as never)]! ? Number.MAX_SAFE_INTEGER : 0,
+            buyable: (_accountId, fundId) => buyableFlags[CLASS_IDS.indexOf(fundId as never)]!,
+            sellable: (_accountId, fundId) =>
+              sellableFlags[CLASS_IDS.indexOf(fundId as never)]! ? Number.MAX_SAFE_INTEGER : 0,
+            preferenceRank: () => 0,
             toleranceCents: 0,
             minTradeCents: 0,
           };
@@ -125,10 +120,11 @@ describe.each([
 
           const problem: TransportationProblem = {
             accounts: [
-              { id: "acct_a", taxType: "taxable", fallbackAssetClassId: "c0" },
-              { id: "acct_b", taxType: "tax_free", fallbackAssetClassId: "c0" },
+              { id: "acct_a", taxType: "taxable" },
+              { id: "acct_b", taxType: "tax_free" },
             ],
             assetClasses: CLASS_IDS.map((id) => ({ id, taxPreference: "neutral" })),
+            funds: CLASS_IDS.map((id) => ({ id, weights: new Map([[id, 10000]]) })),
             cash: new Map([
               ["acct_a", cashes[0]!],
               ["acct_b", cashes[1]!],
@@ -140,6 +136,7 @@ describe.each([
             ]),
             buyable: () => true,
             sellable: () => Number.MAX_SAFE_INTEGER,
+            preferenceRank: () => 0,
             toleranceCents: 0,
             minTradeCents: 0,
           };
@@ -179,10 +176,11 @@ describe("allocate - lp vs greedy (fast-check)", () => {
 
           const problem: TransportationProblem = {
             accounts: [
-              { id: "acct_a", taxType: "taxable", fallbackAssetClassId: CLASS_IDS[buyableFlags.slice(0, 3).findIndex(Boolean)] },
-              { id: "acct_b", taxType: "tax_free", fallbackAssetClassId: CLASS_IDS[buyableFlags.slice(3).findIndex(Boolean)] },
+              { id: "acct_a", taxType: "taxable" },
+              { id: "acct_b", taxType: "tax_free" },
             ],
             assetClasses: CLASS_IDS.map((id) => ({ id, taxPreference: "neutral" })),
+            funds: CLASS_IDS.map((id) => ({ id, weights: new Map([[id, 10000]]) })),
             cash: new Map([
               ["acct_a", cashes[0]!],
               ["acct_b", cashes[1]!],
@@ -194,9 +192,10 @@ describe("allocate - lp vs greedy (fast-check)", () => {
                 new Map(CLASS_IDS.map((id, i) => [id, flatHoldings[a * 3 + i]!])),
               ]),
             ),
-            buyable: (accountId, assetClassId) => buyableFlags[flagIndex(accountId, assetClassId)]!,
-            sellable: (accountId, assetClassId) =>
-              sellableFlags[flagIndex(accountId, assetClassId)]! ? Number.MAX_SAFE_INTEGER : 0,
+            buyable: (accountId, fundId) => buyableFlags[flagIndex(accountId, fundId)]!,
+            sellable: (accountId, fundId) =>
+              sellableFlags[flagIndex(accountId, fundId)]! ? Number.MAX_SAFE_INTEGER : 0,
+            preferenceRank: () => 0,
             toleranceCents: 0,
             minTradeCents: 0,
           };

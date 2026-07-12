@@ -5,12 +5,18 @@ import {
   addAccount,
   addAssetClass,
   addFund,
+  addFundClass,
   emptyScenario,
+  fundWeightTotal,
   removeAccount,
   removeAssetClass,
   removeFund,
+  removeFundClass,
   reorderFundPreference,
+  replaceFundClass,
   setFundAvailability,
+  setFundClassWeight,
+  setFundSoleClass,
   targetWeightTotal,
   updateAssetClass,
   updateFund,
@@ -26,7 +32,7 @@ const base: Scenario = {
       { id: "stocks", name: "Stocks" },
       { id: "bonds", name: "Bonds" },
     ],
-    funds: [{ id: "vti", name: "VTI", assetClassId: "stocks" }],
+    funds: [{ id: "vti", name: "VTI", assetClasses: { "stocks": 10000 } }],
     accounts: [{ id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vti"] }],
     holdings: [{ accountId: "ira", fundId: "vti", value: 100000 }],
   },
@@ -157,6 +163,47 @@ test("withHolding sets a position value and removes it at zero", () => {
   expect(s.portfolio.holdings).toEqual([{ accountId: "ira", fundId: "vti", value: 12345 }]);
   s = withHolding(s, "ira", "vti", 0);
   expect(s.portfolio.holdings).toEqual([]);
+});
+
+test("blend updaters: set, add, replace, and remove slices while keeping the total valid", () => {
+  let s = emptyScenario();
+  s = addAssetClass(s, "US Stocks");
+  s = addAssetClass(s, "Intl Stocks");
+  s = addAssetClass(s, "Bonds");
+  s = addFund(s, "VT", "us-stocks");
+  expect(s.portfolio.funds[0]!.assetClasses).toEqual({ "us-stocks": 10000 });
+
+  // Carve the fund into a 65/35 blend: a new slice pre-fills the missing weight.
+  s = setFundClassWeight(s, "vt", "us-stocks", 6500);
+  s = addFundClass(s, "vt", "intl-stocks");
+  expect(s.portfolio.funds[0]!.assetClasses).toEqual({ "us-stocks": 6500, "intl-stocks": 3500 });
+  expect(fundWeightTotal(s.portfolio.funds[0]!)).toBe(10000);
+
+  // Point the intl slice at bonds instead, weight intact.
+  s = replaceFundClass(s, "vt", "intl-stocks", "bonds");
+  expect(s.portfolio.funds[0]!.assetClasses).toEqual({ "us-stocks": 6500, bonds: 3500 });
+
+  // Removing down to one slice bumps the survivor to 100%; the last slice
+  // can never be removed.
+  s = removeFundClass(s, "vt", "bonds");
+  expect(s.portfolio.funds[0]!.assetClasses).toEqual({ "us-stocks": 10000 });
+  expect(removeFundClass(s, "vt", "us-stocks")).toEqual(s);
+
+  s = setFundSoleClass(s, "vt", "bonds");
+  expect(s.portfolio.funds[0]!.assetClasses).toEqual({ bonds: 10000 });
+});
+
+test("removeAssetClass renormalizes surviving blend slices instead of orphaning the fund", () => {
+  let s = emptyScenario();
+  s = addAssetClass(s, "US Stocks");
+  s = addAssetClass(s, "Intl Stocks");
+  s = addAssetClass(s, "Bonds");
+  s = addFund(s, "VT", "us-stocks");
+  s = updateFund(s, "vt", { assetClasses: { "us-stocks": 6000, "intl-stocks": 3000, bonds: 1000 } });
+
+  const pruned = removeAssetClass(s, "bonds");
+  // 6000/3000 rescale to 6667/3333 — largest remainder keeps the 10000 total.
+  expect(pruned.portfolio.funds[0]!.assetClasses).toEqual({ "us-stocks": 6667, "intl-stocks": 3333 });
 });
 
 test("withOptions merges patches and keeps selling flags coherent", () => {

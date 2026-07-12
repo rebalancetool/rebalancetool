@@ -6,7 +6,6 @@ import type {
   Account,
   AllocationEntry,
   DeviationEntry,
-  Fund,
   Portfolio,
   RebalanceOptions,
   RebalanceResult,
@@ -28,12 +27,17 @@ import type {
  * tax-advantaged accounts, and never touching taxable positions unless
  * sellInTaxableAccounts is also set.
  *
- * Structurally, rebalance() reduces its inputs to a TransportationProblem in
- * (account × asset class) space and delegates the placement decision to
- * allocate() (see allocate.ts — the optimizer-swappable seam); steps 3-5
- * below describe the greedy placement allocate() currently implements.
- * rebalance() then translates the returned allocation's deltas into Trades
- * with human-readable reasons.
+ * Structurally, rebalance() reduces its inputs to a TransportationProblem
+ * in (account × fund) space and delegates the placement decision to
+ * allocate() (see allocate.ts — the optimizer-swappable seam); demands stay
+ * in asset-class space, and each fund's class weights connect the two. A
+ * fund may blend several asset classes (VT = 65% US + 35% intl); its buys
+ * and sells move every component in lockstep, which the default LP engine
+ * handles natively. The greedy engine predates blends and only supports
+ * single-class funds (rebalance() rejects the combination up front). Steps
+ * 3-5 below describe the greedy placement allocate() implements; the
+ * allocator returns final per-(account × fund) values, which rebalance()
+ * translates into Trades with human-readable reasons.
  *
  * Given a Portfolio and a set of Contributions (each earmarked to one
  * account — money never moves between accounts, mirroring the real-world
@@ -41,7 +45,9 @@ import type {
  * IRA), the steps are:
  *
  *   1. Sum current holdings by asset class across *all* accounts combined,
- *      using nominal (not tax-adjusted) dollar values.
+ *      using nominal (not tax-adjusted) dollar values (a blended fund's
+ *      value counts toward each component class in proportion to its
+ *      weights).
  *   2. Add every contribution to the portfolio total to get the
  *      post-contribution total portfolio value, then compute each asset
  *      class's target dollar value at that new total (largest-remainder
@@ -100,18 +106,29 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   const optimizer = options.optimizer ?? "lp";
   const minTradeCents = options.minTradeCents ?? 0;
 
-  // --- Step 1: current holdings per account, by asset class and by fund ---
-  const currentByAccount = new Map<string, Map<string, number>>();
+  // Positive-weight composition per fund (zero-weight entries are edit-time
+  // noise and treated as absent everywhere below).
+  const weightsByFund = new Map<string, Map<string, number>>(
+    portfolio.funds.map((f) => [f.id, new Map(Object.entries(f.assetClasses).filter(([, weight]) => weight > 0))]),
+  );
+
+  if (optimizer === "greedy") {
+    const blended = portfolio.funds.find((f) => weightsByFund.get(f.id)!.size > 1);
+    if (blended !== undefined) {
+      throw new Error(
+        `The "greedy" optimizer only supports single-asset-class funds, but "${blended.id}" blends ` +
+          `${weightsByFund.get(blended.id)!.size} classes. Use the default "lp" optimizer.`,
+      );
+    }
+  }
+
+  // --- Step 1: current holdings per account, by fund ---
   const heldFundValues = new Map<string, Map<string, number>>();
   for (const account of portfolio.accounts) {
-    currentByAccount.set(account.id, new Map());
     heldFundValues.set(account.id, new Map());
   }
   let currentPortfolioTotal = 0;
   for (const holding of portfolio.holdings) {
-    const fund = fundsById.get(holding.fundId)!;
-    const row = currentByAccount.get(holding.accountId)!;
-    row.set(fund.assetClassId, (row.get(fund.assetClassId) ?? 0) + holding.value);
     const fundRow = heldFundValues.get(holding.accountId)!;
     fundRow.set(holding.fundId, (fundRow.get(holding.fundId) ?? 0) + holding.value);
     currentPortfolioTotal += holding.value;
@@ -141,24 +158,26 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   // --- Steps 3-5: delegate placement to the allocation seam ---
   const problem: TransportationProblem = {
-    accounts: portfolio.accounts.map((account) => ({
-      id: account.id,
-      taxType: account.taxType,
-      fallbackAssetClassId:
-        account.availableFundIds.length > 0 ? fundsById.get(account.availableFundIds[0]!)!.assetClassId : undefined,
-    })),
+    accounts: portfolio.accounts.map((account) => ({ id: account.id, taxType: account.taxType })),
     assetClasses: portfolio.assetClasses.map((assetClass) => ({
       id: assetClass.id,
       taxPreference: assetClass.taxPreference ?? "neutral",
     })),
+    funds: portfolio.funds.map((fund) => ({ id: fund.id, weights: weightsByFund.get(fund.id)! })),
     cash: accountCash,
     demands,
-    current: currentByAccount,
-    buyable: (accountId, assetClassId) => accountHasFundFor(accountsById.get(accountId)!, assetClassId, fundsById),
-    sellable: (accountId, assetClassId) => {
+    current: heldFundValues,
+    buyable: (accountId, fundId) => accountsById.get(accountId)!.availableFundIds.includes(fundId),
+    sellable: (accountId, fundId) => {
       if (!allowSelling) return 0;
       if (accountsById.get(accountId)!.taxType === "taxable" && !sellInTaxableAccounts) return 0;
-      return currentByAccount.get(accountId)!.get(assetClassId) ?? 0;
+      return heldFundValues.get(accountId)!.get(fundId) ?? 0;
+    },
+    preferenceRank: (accountId, fundId) => {
+      const menu = accountsById.get(accountId)!.availableFundIds;
+      const index = menu.indexOf(fundId);
+      // Held-but-not-buyable funds rank after every menu entry.
+      return index === -1 ? menu.length : index;
     },
     // ±toleranceBps of target weight, expressed in dollars of the new total.
     toleranceCents: Math.floor((newTotal * toleranceBps) / TOTAL_BPS),
@@ -167,75 +186,71 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   const allocation = optimizer === "lp" ? allocateLp(problem) : allocate(problem);
 
-  // --- translate allocation deltas (x[a][c] - H[a][c]) into trades ---
-  const leftoverByAccount = new Map<string, { assetClassId: string; amount: number }>();
+  // --- translate allocation deltas (x[a][f] - H[a][f]) into trades ---
+  const leftoverByAccount = new Map<string, { fundId: string; amount: number }>();
   for (const w of allocation.warnings) {
     if (w.kind === "leftover_cash") leftoverByAccount.set(w.accountId, w);
   }
+
+  /** "65% US Stocks, 35% International Stocks" — a blend's composition for trade reasons. */
+  const describeBlend = (weights: Map<string, number>): string =>
+    [...weights.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([classId, weight]) => `${formatBpsAsPercent(weight)} ${assetClassesById.get(classId)!.name}`)
+      .join(", ");
 
   const trades: Trade[] = [];
   const accountsByIdOrder = [...portfolio.accounts].sort((a, b) => a.id.localeCompare(b.id));
   for (const account of accountsByIdOrder) {
     const row = allocation.x.get(account.id)!;
-    const currentRow = currentByAccount.get(account.id)!;
-    for (const assetClassId of [...row.keys()].sort()) {
-      const delta = (row.get(assetClassId) ?? 0) - (currentRow.get(assetClassId) ?? 0);
-      const assetClass = assetClassesById.get(assetClassId)!;
+    const heldRow = heldFundValues.get(account.id)!;
+    for (const fundId of [...new Set([...row.keys(), ...heldRow.keys()])].sort()) {
+      const delta = (row.get(fundId) ?? 0) - (heldRow.get(fundId) ?? 0);
+      if (delta === 0) continue;
+      const fund = fundsById.get(fundId)!;
+      const weights = weightsByFund.get(fundId)!;
+      const label = fund.ticker ?? fund.name;
+      const soleClassId = weights.size === 1 ? weights.keys().next().value! : undefined;
       if (delta > 0) {
-        const fund = pickFund(account, assetClassId, fundsById);
         const leftover = leftoverByAccount.get(account.id);
-        const leftoverPart = leftover !== undefined && leftover.assetClassId === assetClassId ? leftover.amount : 0;
+        const leftoverPart = leftover !== undefined && leftover.fundId === fundId ? leftover.amount : 0;
         const gapPart = delta - leftoverPart;
         const reasons: string[] = [];
         if (gapPart > 0) {
           reasons.push(
-            `${assetClass.name} is below target; buying ${formatDollars(gapPart)} of ${fund.ticker ?? fund.name} in ${account.name}.`,
+            soleClassId !== undefined
+              ? `${assetClassesById.get(soleClassId)!.name} is below target; buying ${formatDollars(gapPart)} of ` +
+                  `${label} in ${account.name}.`
+              : `Buying ${formatDollars(gapPart)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+                  `to close underweight asset classes.`,
           );
         }
         if (leftoverPart > 0) {
           reasons.push(
-            `Investing ${formatDollars(leftoverPart)} of leftover contribution cash in ${fund.ticker ?? fund.name}, ` +
+            `Investing ${formatDollars(leftoverPart)} of leftover contribution cash in ${label}, ` +
               `the most-preferred fund of ${account.name}.`,
           );
         }
         trades.push({
           accountId: account.id,
-          fundId: fund.id,
+          fundId,
           action: "buy",
           amount: delta,
           reason: reasons.join(" "),
         });
-      } else if (delta < 0) {
-        // Sell |delta| out of the held funds of this class, least-preferred
-        // first (funds no longer in availableFundIds count as least preferred
-        // of all).
-        const fundRow = heldFundValues.get(account.id)!;
-        const heldFunds = [...fundRow.entries()]
-          .filter(([fundId, value]) => value > 0 && fundsById.get(fundId)!.assetClassId === assetClassId)
-          .sort(([idA], [idB]) => {
-            const rankA = account.availableFundIds.indexOf(idA);
-            const rankB = account.availableFundIds.indexOf(idB);
-            const normA = rankA === -1 ? Number.MAX_SAFE_INTEGER : rankA;
-            const normB = rankB === -1 ? Number.MAX_SAFE_INTEGER : rankB;
-            if (normA !== normB) return normB - normA;
-            return idA.localeCompare(idB);
-          });
-        let remainingToSell = -delta;
-        for (const [fundId, heldValue] of heldFunds) {
-          if (remainingToSell <= 0) break;
-          const amount = Math.min(heldValue, remainingToSell);
-          const fund = fundsById.get(fundId)!;
-          trades.push({
-            accountId: account.id,
-            fundId,
-            action: "sell",
-            amount,
-            reason:
-              `${assetClass.name} is above target; selling ${formatDollars(amount)} of ` +
-              `${fund.ticker ?? fund.name} in ${account.name} to fund underweight asset classes.`,
-          });
-          remainingToSell -= amount;
-        }
+      } else {
+        trades.push({
+          accountId: account.id,
+          fundId,
+          action: "sell",
+          amount: -delta,
+          reason:
+            soleClassId !== undefined
+              ? `${assetClassesById.get(soleClassId)!.name} is above target; selling ${formatDollars(-delta)} of ` +
+                `${label} in ${account.name} to fund underweight asset classes.`
+              : `Selling ${formatDollars(-delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+                `to fund underweight asset classes.`,
+        });
       }
     }
   }
@@ -265,7 +280,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
           break;
         }
         const offering = portfolio.accounts
-          .filter((account) => accountHasFundFor(account, w.assetClassId, fundsById))
+          .filter((account) => accountHasFundFor(account, w.assetClassId, weightsByFund))
           .sort((a, b) => a.id.localeCompare(b.id));
         if (offering.length === 0) {
           warnings.push(
@@ -286,7 +301,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       }
       case "leftover_cash": {
         const account = accountsById.get(w.accountId)!;
-        const fund = fundsById.get(account.availableFundIds[0]!)!;
+        const fund = fundsById.get(w.fundId)!;
         warnings.push(
           `${account.name} had ${formatDollars(w.amount)} of contribution left after closing every reachable gap; ` +
             `invested it in ${fund.ticker ?? fund.name}, its most-preferred fund.`,
@@ -318,21 +333,28 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   });
 
   // --- resulting allocation & deviation, post-trade ---
+  // A blended fund's dollars are split across its component classes by
+  // largest-remainder on the weights, so class totals stay integer cents and
+  // every fund's value is conserved exactly across its components.
   const currentTotals = new Map<string, number>();
   const resultingTotals = new Map<string, number>();
   for (const assetClass of portfolio.assetClasses) {
     currentTotals.set(assetClass.id, 0);
     resultingTotals.set(assetClass.id, 0);
   }
-  for (const row of currentByAccount.values()) {
-    for (const [assetClassId, value] of row) {
-      currentTotals.set(assetClassId, (currentTotals.get(assetClassId) ?? 0) + value);
+  const addSplit = (totals: Map<string, number>, fundId: string, value: number): void => {
+    const weights = weightsByFund.get(fundId)!;
+    const shares = proportionalAllocate(
+      value,
+      [...weights.entries()].map(([key, weight]) => ({ key, weight })),
+    );
+    for (const [classId, share] of shares) {
+      totals.set(classId, (totals.get(classId) ?? 0) + share);
     }
-  }
-  for (const row of allocation.x.values()) {
-    for (const [assetClassId, value] of row) {
-      resultingTotals.set(assetClassId, (resultingTotals.get(assetClassId) ?? 0) + value);
-    }
+  };
+  for (const account of portfolio.accounts) {
+    for (const [fundId, value] of heldFundValues.get(account.id)!) addSplit(currentTotals, fundId, value);
+    for (const [fundId, value] of allocation.x.get(account.id)!) addSplit(resultingTotals, fundId, value);
   }
 
   const resultingWeightByAssetClass = proportionalAllocate(
@@ -364,10 +386,11 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
  * proportion to each entry's weight, using largest-remainder rounding so
  * the shares sum to exactly `totalToDistribute` despite integer truncation.
  * Ties in the remainder are broken by `key` so the result never depends on
- * input array order. Used both for target-dollars-per-asset-class (weights
- * are basis points) and resulting-weight-per-asset-class (weights are
- * dollar values), which is why "weight" here is a unitless ratio, not
- * specifically basis points or cents.
+ * input array order. Used for target-dollars-per-asset-class (weights are
+ * basis points), resulting-weight-per-asset-class (weights are dollar
+ * values), and splitting a blended fund's value across its component
+ * classes, which is why "weight" here is a unitless ratio, not specifically
+ * basis points or cents.
  */
 function proportionalAllocate(
   totalToDistribute: number,
@@ -401,17 +424,18 @@ function proportionalAllocate(
   return result;
 }
 
-function accountHasFundFor(account: Account, assetClassId: string, fundsById: Map<string, Fund>): boolean {
-  return account.availableFundIds.some((id) => fundsById.get(id)?.assetClassId === assetClassId);
+/** Whether the account's menu offers any exposure (weight > 0) to the asset class. */
+function accountHasFundFor(
+  account: Account,
+  assetClassId: string,
+  weightsByFund: Map<string, Map<string, number>>,
+): boolean {
+  return account.availableFundIds.some((id) => (weightsByFund.get(id)?.get(assetClassId) ?? 0) > 0);
 }
 
-/** Earliest fund in the account's ordered `availableFundIds` belonging to `assetClassId`. */
-function pickFund(account: Account, assetClassId: string, fundsById: Map<string, Fund>): Fund {
-  for (const id of account.availableFundIds) {
-    const fund = fundsById.get(id);
-    if (fund !== undefined && fund.assetClassId === assetClassId) return fund;
-  }
-  throw new Error(`Account "${account.id}" has no available fund for asset class "${assetClassId}".`);
+/** "6500" bps → "65%"; keeps fractional percents readable ("12.5%"). */
+function formatBpsAsPercent(bps: number): string {
+  return `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 }
 
 function formatDollars(cents: number): string {
@@ -432,8 +456,27 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   if (accountIds.size !== portfolio.accounts.length) throw new Error("Duplicate Account id.");
 
   for (const fund of portfolio.funds) {
-    if (!assetClassIds.has(fund.assetClassId)) {
-      throw new Error(`Fund "${fund.id}" references unknown assetClassId "${fund.assetClassId}".`);
+    const entries = Object.entries(fund.assetClasses);
+    if (entries.length === 0) {
+      throw new Error(`Fund "${fund.id}" must list at least one asset class in assetClasses.`);
+    }
+    let weightSum = 0;
+    for (const [assetClassId, weight] of entries) {
+      if (!assetClassIds.has(assetClassId)) {
+        throw new Error(`Fund "${fund.id}" references unknown assetClassId "${assetClassId}".`);
+      }
+      if (!Number.isInteger(weight) || weight < 0) {
+        throw new Error(
+          `Fund "${fund.id}" weight for "${assetClassId}" must be a non-negative integer number of basis points, ` +
+            `got ${weight}.`,
+        );
+      }
+      weightSum += weight;
+    }
+    if (weightSum !== TOTAL_BPS) {
+      throw new Error(
+        `Fund "${fund.id}" asset-class weights must sum to exactly ${TOTAL_BPS} basis points, got ${weightSum}.`,
+      );
     }
   }
 

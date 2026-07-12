@@ -1,3 +1,4 @@
+import { TOTAL_BPS } from "@rebalancer/solver";
 import type { Account, AssetClass, Contribution, Fund, Scenario, TaxType } from "@rebalancer/solver";
 
 /**
@@ -76,21 +77,54 @@ export function updateAssetClass(
   });
 }
 
-/** Removing a class removes its funds (and their holdings/availability) and its target. */
+/**
+ * Removing a class removes its slice from every fund's blend (renormalizing
+ * the rest so the fund stays valid), removes funds that held nothing else
+ * (and their holdings/availability), and drops its target.
+ */
 export function removeAssetClass(scenario: Scenario, id: string): Scenario {
   let next = withPortfolio(scenario, {
     assetClasses: scenario.portfolio.assetClasses.filter((c) => c.id !== id),
   });
   for (const fund of scenario.portfolio.funds) {
-    if (fund.assetClassId === id) next = removeFund(next, fund.id);
+    if (!(id in fund.assetClasses)) continue;
+    const remaining = Object.entries(fund.assetClasses).filter(([classId]) => classId !== id);
+    if (remaining.length === 0) {
+      next = removeFund(next, fund.id);
+    } else {
+      next = updateFund(next, fund.id, { assetClasses: renormalizedWeights(remaining) });
+    }
   }
   return { ...next, targets: next.targets.filter((t) => t.assetClassId !== id) };
+}
+
+/**
+ * Scale blend weights so they total exactly TOTAL_BPS again (largest
+ * remainder, ties by class id; an all-zero blend splits evenly). Structure
+ * repair for cascading removals only — no allocation decisions here.
+ */
+function renormalizedWeights(entries: Array<[string, number]>): Record<string, number> {
+  const total = entries.reduce((sum, [, weight]) => sum + weight, 0);
+  if (total === TOTAL_BPS) return Object.fromEntries(entries);
+  const shares = entries.map(([classId, weight]) => {
+    const exact = total === 0 ? TOTAL_BPS / entries.length : (TOTAL_BPS * weight) / total;
+    const floor = Math.floor(exact);
+    return { classId, floor, remainder: exact - floor };
+  });
+  let remaining = TOTAL_BPS - shares.reduce((sum, s) => sum + s.floor, 0);
+  const byRemainder = [...shares].sort((a, b) => b.remainder - a.remainder || a.classId.localeCompare(b.classId));
+  for (const share of byRemainder) {
+    if (remaining <= 0) break;
+    share.floor += 1;
+    remaining -= 1;
+  }
+  return Object.fromEntries(shares.map((s) => [s.classId, s.floor]));
 }
 
 export function addFund(scenario: Scenario, ticker: string, assetClassId: string): Scenario {
   const id = newId(ticker, scenario.portfolio.funds.map((f) => f.id), "fund");
   return withPortfolio(scenario, {
-    funds: [...scenario.portfolio.funds, { id, ticker, name: "", assetClassId }],
+    funds: [...scenario.portfolio.funds, { id, ticker, name: "", assetClasses: { [assetClassId]: TOTAL_BPS } }],
   });
 }
 
@@ -98,6 +132,58 @@ export function updateFund(scenario: Scenario, id: string, patch: Partial<Omit<F
   return withPortfolio(scenario, {
     funds: scenario.portfolio.funds.map((f) => (f.id === id ? { ...f, ...patch } : f)),
   });
+}
+
+/* ---- Fund blends (assetClassId → bps, summing to TOTAL_BPS) ------------ */
+
+/** Sum of a fund's blend weights in bps — the "must total 100%" indicator for the blend editor. */
+export function fundWeightTotal(fund: Fund): number {
+  return Object.values(fund.assetClasses).reduce((sum, weight) => sum + weight, 0);
+}
+
+/** Collapse a fund to a single asset class at 100%. */
+export function setFundSoleClass(scenario: Scenario, fundId: string, assetClassId: string): Scenario {
+  return updateFund(scenario, fundId, { assetClasses: { [assetClassId]: TOTAL_BPS } });
+}
+
+/** Set one slice's weight (integer bps) in a fund's blend, leaving the other slices alone. */
+export function setFundClassWeight(scenario: Scenario, fundId: string, assetClassId: string, weight: number): Scenario {
+  const fund = scenario.portfolio.funds.find((f) => f.id === fundId);
+  if (!fund) return scenario;
+  return updateFund(scenario, fundId, { assetClasses: { ...fund.assetClasses, [assetClassId]: weight } });
+}
+
+/** Add a slice for a class, pre-filled with whatever weight is missing from 100%. */
+export function addFundClass(scenario: Scenario, fundId: string, assetClassId: string): Scenario {
+  const fund = scenario.portfolio.funds.find((f) => f.id === fundId);
+  if (!fund || assetClassId in fund.assetClasses) return scenario;
+  const missing = Math.max(0, TOTAL_BPS - fundWeightTotal(fund));
+  return setFundClassWeight(scenario, fundId, assetClassId, missing);
+}
+
+/** Remove a slice; a single surviving slice is bumped to 100% so the fund stays valid. */
+export function removeFundClass(scenario: Scenario, fundId: string, assetClassId: string): Scenario {
+  const fund = scenario.portfolio.funds.find((f) => f.id === fundId);
+  if (!fund) return scenario;
+  const remaining = Object.entries(fund.assetClasses).filter(([classId]) => classId !== assetClassId);
+  if (remaining.length === 0) return scenario; // never leave a fund classless
+  const assetClasses =
+    remaining.length === 1
+      ? { [remaining[0]![0]]: TOTAL_BPS }
+      : Object.fromEntries(remaining);
+  return updateFund(scenario, fundId, { assetClasses });
+}
+
+/** Point a slice at a different class, keeping its weight and position (merges if the target exists). */
+export function replaceFundClass(scenario: Scenario, fundId: string, fromClassId: string, toClassId: string): Scenario {
+  const fund = scenario.portfolio.funds.find((f) => f.id === fundId);
+  if (!fund || !(fromClassId in fund.assetClasses) || fromClassId === toClassId) return scenario;
+  const assetClasses: Record<string, number> = {};
+  for (const [classId, weight] of Object.entries(fund.assetClasses)) {
+    const key = classId === fromClassId ? toClassId : classId;
+    assetClasses[key] = (assetClasses[key] ?? 0) + weight;
+  }
+  return updateFund(scenario, fundId, { assetClasses });
 }
 
 /** Removing a fund removes its holdings and pulls it from every account's menu. */

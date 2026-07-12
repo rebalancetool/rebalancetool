@@ -21,7 +21,10 @@ shape a future UI would save/load):
   - `accounts` — each with a `taxType` and `availableFundIds`, the funds it
     may buy, **ordered most-preferred first** (the first entry is also where
     leftover contribution cash lands).
-  - `funds` — each belonging to one `assetClass`.
+  - `funds` — each with an `assetClasses` map of asset-class weights in
+    basis points summing to 10000. Most funds map one class to 10000; a
+    blended fund like VT is `{ "us_stocks": 6500, "intl_stocks": 3500 }`,
+    and its buys/sells move both components in lockstep.
   - `holdings` — current dollar value (integer cents) of each fund in each account.
 - `targets` — desired weight (integer basis points, summing to 10000) per
   asset class, across the *whole* portfolio combined.
@@ -42,15 +45,19 @@ shape a future UI would save/load):
     always fully invested, however small — cash may not sit idle in an
     account.)
   - `optimizer` (default `"lp"`) — the allocation engine. `"lp"` solves the
-    placement as a linear program ([YALPS](https://github.com/Ivordir/YALPS)):
-    provably minimal deviation, then minimal selling, then minimal *taxable*
-    selling, then tax-preferred placement — and it can *relocate* a class
+    placement as a linear program ([YALPS](https://github.com/Ivordir/YALPS))
+    over per-(account × fund) positions: provably minimal deviation, then
+    minimal selling, then minimal *taxable* selling, then tax-preferred
+    placement, then fund-preference order — and it can *relocate* a class
     between accounts when restricted fund menus require it (e.g. sell bonds
     in the IRA to finish funding international there, while the 401(k) buys
-    the bonds back). `"greedy"` is the original two-pass waterfall:
-    dependency-free and integer-exact, but it only ever sells
-    globally-overweight classes, so it can leave a residual gap on exactly
-    those restricted-menu portfolios. Both honor the same invariants.
+    the bonds back). Blended funds are native to it: it can even sell VT and
+    buy back the international slice with VXUS to shed only the US excess.
+    `"greedy"` is the original two-pass waterfall: dependency-free and
+    integer-exact, but it only ever sells globally-overweight classes, so it
+    can leave a residual gap on exactly those restricted-menu portfolios —
+    and it predates blends, so it rejects portfolios containing a
+    multi-class fund. Both honor the same invariants.
 
 **Algorithm.** The default `"lp"` engine solves the placement directly as a
 linear program (see the comment atop `packages/solver/src/allocate.lp.ts`).
@@ -89,10 +96,12 @@ what should make it safe to drop straight behind a web UI later — the solver
 has no notion of a request/response cycle to adapt.
 
 Internally, `rebalance()` reduces its input to a fixed-supply transportation
-problem and delegates placement behind a deliberate seam: the LP in
-`packages/solver/src/allocate.lp.ts` by default, or the greedy waterfall in
-`allocate.ts` with `optimizer: "greedy"`. A brute-force reference in the
-property tests holds both implementations to the same optimality bar.
+problem in (account × fund) space — asset-class demands connected to fund
+positions through each fund's class weights — and delegates placement behind
+a deliberate seam: the LP in `packages/solver/src/allocate.lp.ts` by
+default, or the greedy waterfall in `allocate.ts` with
+`optimizer: "greedy"`. A brute-force reference in the property tests holds
+both implementations to the same optimality bar.
 
 ## Project layout
 
@@ -186,8 +195,9 @@ JSON scenario format with `validateScenario()`, the test suite (golden
 fixtures + invariant + property-based tests, including a brute-force
 optimality check on the allocator), the CLI, and a local-only web UI
 ([WEB_UI.md](WEB_UI.md)) that builds/edits scenarios, solves live, and
-saves/loads the canonical JSON. Not built yet: CSV/brokerage-export
-parsing, prices/shares/cost-basis (a holding is just fund → dollars), and
+saves/loads the canonical JSON, with a per-fund blend editor for
+multi-class funds. Not built yet: CSV/brokerage-export parsing,
+prices/shares/cost-basis (a holding is just fund → dollars), and
 capital-gains-aware sell selection.
 
 ## CI

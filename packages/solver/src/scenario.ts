@@ -70,10 +70,21 @@ function parseAssetClass(value: unknown, index: number): AssetClass {
 function parseFund(value: unknown, index: number): Fund {
   const path = `portfolio.funds[${index}]`;
   const record = requireRecord(value, path);
+  if (record.assetClasses === undefined && typeof record.assetClassId === "string") {
+    throw new Error(
+      `${path} has "assetClassId" — this is the old single-class fund format. ` +
+        `Use "assetClasses": { "${record.assetClassId}": 10000 } instead (weights are basis points summing to 10000).`,
+    );
+  }
+  const weightsRecord = requireRecord(record.assetClasses, `${path}.assetClasses`);
+  const assetClasses: Record<string, number> = {};
+  for (const [assetClassId, weight] of Object.entries(weightsRecord)) {
+    assetClasses[assetClassId] = requireNumber(weight, `${path}.assetClasses["${assetClassId}"]`);
+  }
   const fund: Fund = {
     id: requireString(record.id, `${path}.id`),
     name: requireString(record.name, `${path}.name`),
-    assetClassId: requireString(record.assetClassId, `${path}.assetClassId`),
+    assetClasses,
   };
   if (record.ticker !== undefined) fund.ticker = requireString(record.ticker, `${path}.ticker`);
   return fund;

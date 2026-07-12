@@ -247,10 +247,10 @@ describe("rebalance - restricted fund menus (residual scenarios)", () => {
         { id: "us_bonds", name: "US Bonds" },
       ],
       funds: [
-        { id: "vti", name: "VTI", assetClassId: "us_stocks" },
-        { id: "vxus", name: "VXUS", assetClassId: "intl_stocks" },
-        { id: "bnd", name: "BND", assetClassId: "us_bonds" },
-        { id: "spx", name: "Employer S&P 500 Fund", assetClassId: "us_stocks" },
+        { id: "vti", name: "VTI", assetClasses: { us_stocks: 10000 } },
+        { id: "vxus", name: "VXUS", assetClasses: { intl_stocks: 10000 } },
+        { id: "bnd", name: "BND", assetClasses: { us_bonds: 10000 } },
+        { id: "spx", name: "Employer S&P 500 Fund", assetClasses: { us_stocks: 10000 } },
       ],
       accounts: [
         { id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vti", "vxus", "bnd"] },
@@ -305,6 +305,154 @@ describe("rebalance - restricted fund menus (residual scenarios)", () => {
   });
 });
 
+describe("rebalance - blended funds", () => {
+  // One IRA whose only stock holding is VT, a 65/35 US/international blend.
+  // Buying or selling VT moves both components in lockstep.
+  function blendHousehold(): Portfolio {
+    return {
+      assetClasses: [
+        { id: "us_stocks", name: "US Stocks" },
+        { id: "intl_stocks", name: "International Stocks" },
+        { id: "us_bonds", name: "US Bonds" },
+      ],
+      funds: [
+        { id: "vt", ticker: "VT", name: "Vanguard Total World ETF", assetClasses: { us_stocks: 6500, intl_stocks: 3500 } },
+        { id: "vti", ticker: "VTI", name: "VTI", assetClasses: { us_stocks: 10000 } },
+        { id: "vxus", ticker: "VXUS", name: "VXUS", assetClasses: { intl_stocks: 10000 } },
+        { id: "bnd", ticker: "BND", name: "BND", assetClasses: { us_bonds: 10000 } },
+      ],
+      accounts: [{ id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vt", "vti", "vxus", "bnd"] }],
+      holdings: [{ accountId: "ira", fundId: "vt", value: 1000000 }],
+    };
+  }
+
+  it("splits a blend's value across its component classes in the allocation report", () => {
+    const portfolio = blendHousehold();
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 6500 },
+      { assetClassId: "intl_stocks", weight: 3500 },
+      { assetClassId: "us_bonds", weight: 0 },
+    ];
+    const result = rebalance(portfolio, targets, { contributions: [] });
+
+    expect(result.trades).toEqual([]);
+    const us = result.resultingAllocation.find((a) => a.assetClassId === "us_stocks")!;
+    const intl = result.resultingAllocation.find((a) => a.assetClassId === "intl_stocks")!;
+    expect(us.currentValue).toBe(650000);
+    expect(intl.currentValue).toBe(350000);
+  });
+
+  it("buys the blend itself when it is the preferred fund and keeps the mix on target", () => {
+    const portfolio = blendHousehold();
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 6500 },
+      { assetClassId: "intl_stocks", weight: 3500 },
+      { assetClassId: "us_bonds", weight: 0 },
+    ];
+    // Buying $1,000 of VT keeps the 65/35 mix exactly; buying VTI+VXUS
+    // separately would too, but VT is the account's most-preferred fund.
+    const result = rebalance(portfolio, targets, {
+      contributions: [{ accountId: "ira", amount: 100000 }],
+    });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([{ accountId: "ira", fundId: "vt", action: "buy", amount: 100000 }]);
+    expect(result.trades[0]!.reason).toContain("65% US Stocks, 35% International Stocks");
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+  });
+
+  it("sells the blend as a bundle when every component is overweight", () => {
+    const portfolio = blendHousehold();
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 5850 },
+      { assetClassId: "intl_stocks", weight: 3150 },
+      { assetClassId: "us_bonds", weight: 1000 },
+    ];
+    // Selling $1,000 of VT sheds exactly the US and intl excesses at once
+    // (65/35 of the sale) and funds the bond gap to the cent.
+    const result = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "ira", fundId: "vt", action: "sell", amount: 100000 },
+      { accountId: "ira", fundId: "bnd", action: "buy", amount: 100000 },
+    ]);
+    expect(result.warnings).toEqual([]);
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+  });
+
+  it("unbundles a blend when only one component is overweight, buying the other back", () => {
+    const portfolio = blendHousehold();
+    // Only US is overweight, but the only way to shed US out of VT is to
+    // shed intl with it. The engine sells enough VT to fix US and *buys
+    // back* the intl slice with VXUS in the same account, leaving intl
+    // exactly where it started (its within-band floor).
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 5000 },
+      { assetClassId: "intl_stocks", weight: 3500 },
+      { assetClassId: "us_bonds", weight: 1500 },
+    ];
+    const result = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "ira", fundId: "vt", action: "sell", amount: 230769 },
+      { accountId: "ira", fundId: "bnd", action: "buy", amount: 150000 },
+      { accountId: "ira", fundId: "vxus", action: "buy", amount: 80769 },
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("never sells a blend when that would push a within-band component below target", () => {
+    const portfolio = blendHousehold();
+    // Same drift as above, but with no intl fund to buy the slice back:
+    // intl is exactly on target, so it is frozen against selling, and any
+    // VT sale would drag it below. The bond gap must go unfixed and be
+    // warned about rather than fixed at intl's expense.
+    portfolio.accounts[0]!.availableFundIds = ["vt", "bnd"];
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 5000 },
+      { assetClassId: "intl_stocks", weight: 3500 },
+      { assetClassId: "us_bonds", weight: 1500 },
+    ];
+    const result = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
+
+    expect(result.trades).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("US Bonds");
+  });
+
+  it("the greedy engine rejects blended funds with a pointer to lp", () => {
+    const portfolio = blendHousehold();
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 6500 },
+      { assetClassId: "intl_stocks", weight: 3500 },
+      { assetClassId: "us_bonds", weight: 0 },
+    ];
+    expect(() => rebalance(portfolio, targets, { contributions: [], optimizer: "greedy" })).toThrow(
+      /greedy.*single-asset-class.*"vt".*lp/s,
+    );
+  });
+
+  it("rejects fund weights that do not sum to 10000 bps", () => {
+    const portfolio = blendHousehold();
+    portfolio.funds[0]!.assetClasses = { us_stocks: 6500, intl_stocks: 3000 };
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 10000 },
+      { assetClassId: "intl_stocks", weight: 0 },
+      { assetClassId: "us_bonds", weight: 0 },
+    ];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(/"vt".*9500/);
+  });
+});
+
 describe("rebalance - selling guards", () => {
   // Overweight stocks live only in the taxable account: without
   // sellInTaxableAccounts nothing may be sold, with it the taxable account
@@ -316,8 +464,8 @@ describe("rebalance - selling guards", () => {
         { id: "us_bonds", name: "US Bonds", taxPreference: "prefer_tax_advantaged" },
       ],
       funds: [
-        { id: "vti", name: "VTI", assetClassId: "us_stocks" },
-        { id: "bnd", name: "BND", assetClassId: "us_bonds" },
+        { id: "vti", name: "VTI", assetClasses: { us_stocks: 10000 } },
+        { id: "bnd", name: "BND", assetClasses: { us_bonds: 10000 } },
       ],
       accounts: [
         { id: "taxable", name: "Taxable", taxType: "taxable", availableFundIds: ["vti", "bnd"] },
@@ -370,9 +518,9 @@ describe("rebalance - selling guards", () => {
         { id: "bonds", name: "Bonds" },
       ],
       funds: [
-        { id: "vti", name: "VTI", assetClassId: "stocks" },
-        { id: "itot", name: "ITOT", assetClassId: "stocks" },
-        { id: "bnd", name: "BND", assetClassId: "bonds" },
+        { id: "vti", name: "VTI", assetClasses: { stocks: 10000 } },
+        { id: "itot", name: "ITOT", assetClasses: { stocks: 10000 } },
+        { id: "bnd", name: "BND", assetClasses: { bonds: 10000 } },
       ],
       accounts: [
         // vti is preferred over itot, so itot must be sold first.
@@ -408,8 +556,8 @@ describe("rebalance - tolerance band and minTradeCents", () => {
         { id: "bonds", name: "Bonds" },
       ],
       funds: [
-        { id: "vti", name: "VTI", assetClassId: "stocks" },
-        { id: "bnd", name: "BND", assetClassId: "bonds" },
+        { id: "vti", name: "VTI", assetClasses: { stocks: 10000 } },
+        { id: "bnd", name: "BND", assetClasses: { bonds: 10000 } },
       ],
       accounts: [{ id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vti", "bnd"] }],
       holdings: [
@@ -526,8 +674,8 @@ describe("rebalance - core invariants", () => {
     const portfolio: Portfolio = {
       assetClasses: [{ id: "stocks", name: "Stocks" }],
       funds: [
-        { id: "fund_a", name: "Fund A", assetClassId: "stocks" },
-        { id: "fund_b", name: "Fund B", assetClassId: "stocks" },
+        { id: "fund_a", name: "Fund A", assetClasses: { stocks: 10000 } },
+        { id: "fund_b", name: "Fund B", assetClasses: { stocks: 10000 } },
       ],
       accounts: [
         // fund_b listed first: availableFundIds order, not id order, must win.
@@ -549,8 +697,8 @@ describe("rebalance - core invariants", () => {
         { id: "gold", name: "Gold" },
       ],
       funds: [
-        { id: "vti", name: "VTI", assetClassId: "stocks" },
-        { id: "gld", name: "GLD", assetClassId: "gold" },
+        { id: "vti", name: "VTI", assetClasses: { stocks: 10000 } },
+        { id: "gld", name: "GLD", assetClasses: { gold: 10000 } },
       ],
       accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["vti"] }],
       holdings: [{ accountId: "acct", fundId: "vti", value: 10000 }],

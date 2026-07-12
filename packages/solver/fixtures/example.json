@@ -11,11 +11,11 @@
     ],
 
     "funds": [
-      { "id": "vti", "ticker": "VTI", "name": "Vanguard Total Stock Market ETF", "assetClassId": "us_stocks" },
-      { "id": "vxus", "ticker": "VXUS", "name": "Vanguard Total International Stock ETF", "assetClassId": "intl_stocks" },
-      { "id": "bnd", "ticker": "BND", "name": "Vanguard Total Bond Market ETF", "assetClassId": "us_bonds" },
-      { "id": "bndx", "ticker": "BNDX", "name": "Vanguard Total International Bond ETF", "assetClassId": "intl_bonds" },
-      { "id": "avuv", "ticker": "AVUV", "name": "Avantis US Small Cap Value ETF", "assetClassId": "us_small_cap_value" }
+      { "id": "vti", "ticker": "VTI", "name": "Vanguard Total Stock Market ETF", "assetClasses": { "us_stocks": 10000 } },
+      { "id": "vxus", "ticker": "VXUS", "name": "Vanguard Total International Stock ETF", "assetClasses": { "intl_stocks": 10000 } },
+      { "id": "bnd", "ticker": "BND", "name": "Vanguard Total Bond Market ETF", "assetClasses": { "us_bonds": 10000 } },
+      { "id": "bndx", "ticker": "BNDX", "name": "Vanguard Total International Bond ETF", "assetClasses": { "intl_bonds": 10000 } },
+      { "id": "avuv", "ticker": "AVUV", "name": "Avantis US Small Cap Value ETF", "assetClasses": { "us_small_cap_value": 10000 } }
     ],
 
     "accounts": [

@@ -24,7 +24,15 @@ export interface Fund {
   id: string;
   ticker?: string;
   name: string;
-  assetClassId: string;
+  /**
+   * What the fund is made of: assetClassId → weight in integer basis points,
+   * summing to exactly TOTAL_BPS. Most funds map a single class to 10000; a
+   * blended fund like VT splits its value across several (e.g.
+   * { us_stocks: 6500, intl_stocks: 3500 }). Zero-weight entries are allowed
+   * (the UI keeps them around mid-edit) and treated as absent. Trades move a
+   * blend's components in lockstep — you can't buy just the US slice of VT.
+   */
+  assetClasses: Record<string, number>;
 }
 
 export interface Account {

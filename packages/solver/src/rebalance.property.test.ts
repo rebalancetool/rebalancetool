@@ -134,12 +134,13 @@ describe("rebalance - properties (fast-check)", () => {
         const newTotal =
           portfolio.holdings.reduce((s, h) => s + h.value, 0) + contributions.reduce((s, c) => s + c.amount, 0);
         const fundsById = new Map(fixture.funds.map((f) => [f.id, f]));
-        const soldClasses = new Set(
-          result.trades.filter((t) => t.action === "sell").map((t) => fundsById.get(t.fundId)!.assetClassId),
-        );
+        // The fixture's funds are all single-class, so "the class a sell
+        // touched" is well-defined here (blends get their own suite below).
+        const soleClass = (fundId: string) => Object.keys(fundsById.get(fundId)!.assetClasses)[0]!;
+        const soldClasses = new Set(result.trades.filter((t) => t.action === "sell").map((t) => soleClass(t.fundId)));
         const currentByClass = new Map<string, number>();
         for (const holding of portfolio.holdings) {
-          const classId = fundsById.get(holding.fundId)!.assetClassId;
+          const classId = soleClass(holding.fundId);
           currentByClass.set(classId, (currentByClass.get(classId) ?? 0) + holding.value);
         }
         for (const target of targets) {
@@ -160,6 +161,65 @@ describe("rebalance - properties (fast-check)", () => {
           expect(resulting.value).toBeGreaterThanOrEqual(floor - slack);
         }
       }),
+    );
+  });
+
+  it("holds the core invariants with a blended fund in the mix (lp engine)", () => {
+    // The fixture plus VT (65% US / 35% intl), buyable and held in the
+    // taxable account. Blends require the lp engine (greedy rejects them).
+    const blendedPortfolio: Portfolio = {
+      ...fixture,
+      funds: [
+        ...fixture.funds,
+        { id: "vt", ticker: "VT", name: "Vanguard Total World ETF", assetClasses: { us_stocks: 6500, intl_stocks: 3500 } },
+      ],
+      accounts: fixture.accounts.map((a) =>
+        a.id === "taxable" ? { ...a, availableFundIds: [...a.availableFundIds, "vt"] } : a,
+      ),
+      holdings: [...fixture.holdings, { accountId: "taxable", fundId: "vt", value: 600000 }],
+    };
+    fc.assert(
+      fc.property(
+        rawWeightsArb,
+        amountsArb,
+        fc.record({ allowSelling: fc.boolean(), sellInTaxableAccounts: fc.boolean() }),
+        (rawWeights, amounts, sellOptions) => {
+          const targets = makeTargets(rawWeights);
+          const contributions = buildContributions(amounts);
+          const result = rebalance(blendedPortfolio, targets, { contributions, ...sellOptions });
+
+          // Buy-only stays buy-only; the taxable guard still holds.
+          if (!sellOptions.allowSelling) {
+            expect(result.trades.every((t) => t.action === "buy")).toBe(true);
+          }
+          if (!sellOptions.sellInTaxableAccounts) {
+            expect(result.trades.some((t) => t.action === "sell" && t.accountId === "taxable")).toBe(false);
+          }
+
+          // Per-account conservation, trades vs breakdown.
+          for (const accountId of accountIds) {
+            const contributed = contributions.find((c) => c.accountId === accountId)!.amount;
+            const net = result.trades
+              .filter((t) => t.accountId === accountId)
+              .reduce((s, t) => s + (t.action === "buy" ? t.amount : -t.amount), 0);
+            expect(net).toBe(contributed);
+          }
+
+          // No class ever ends below min(current, target): selling a blend
+          // drags every component down together, so the floor must hold for
+          // each component class. Slack: one cent of largest-remainder split
+          // noise per position, plus one for target-dollar rounding.
+          const newTotal =
+            blendedPortfolio.holdings.reduce((s, h) => s + h.value, 0) +
+            contributions.reduce((s, c) => s + c.amount, 0);
+          const slack = 1 + blendedPortfolio.holdings.length + blendedPortfolio.accounts.length;
+          for (const target of targets) {
+            const entry = result.resultingAllocation.find((a) => a.assetClassId === target.assetClassId)!;
+            const targetDollars = Math.floor((newTotal * target.weight) / 10000);
+            expect(entry.value).toBeGreaterThanOrEqual(Math.min(entry.currentValue, targetDollars) - slack);
+          }
+        },
+      ),
     );
   });
 

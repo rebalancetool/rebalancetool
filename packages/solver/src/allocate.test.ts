@@ -2,15 +2,22 @@ import { describe, expect, it } from "vitest";
 import { allocate } from "./allocate.ts";
 import type { TransportationProblem } from "./allocate.ts";
 
+/**
+ * These tests exercise the seam in class-space terms: each asset class gets
+ * exactly one single-class fund whose id *is* the class id, so `current` and
+ * `x` read the same whether you think in funds or classes.
+ */
 function makeProblem(partial: Partial<TransportationProblem>): TransportationProblem {
   return {
     accounts: [],
     assetClasses: [],
+    funds: (partial.assetClasses ?? []).map((c) => ({ id: c.id, weights: new Map([[c.id, 10000]]) })),
     cash: new Map(),
     demands: new Map(),
     current: new Map(),
     buyable: () => true,
     sellable: () => 0,
+    preferenceRank: () => 0,
     toleranceCents: 0,
     minTradeCents: 0,
     ...partial,
@@ -21,7 +28,7 @@ describe("allocate - greedy buy waterfall", () => {
   it("drains the biggest gap first and reports what cash could not reach", () => {
     const result = allocate(
       makeProblem({
-        accounts: [{ id: "acct", taxType: "taxable", fallbackAssetClassId: "big" }],
+        accounts: [{ id: "acct", taxType: "taxable" }],
         assetClasses: [
           { id: "big", taxPreference: "neutral" },
           { id: "small", taxPreference: "neutral" },
@@ -47,8 +54,8 @@ describe("allocate - greedy buy waterfall", () => {
     const result = allocate(
       makeProblem({
         accounts: [
-          { id: "a_brokerage", taxType: "taxable", fallbackAssetClassId: "stocks" },
-          { id: "z_roth", taxType: "tax_free", fallbackAssetClassId: "stocks" },
+          { id: "a_brokerage", taxType: "taxable" },
+          { id: "z_roth", taxType: "tax_free" },
         ],
         assetClasses: [
           { id: "bonds", taxPreference: "prefer_tax_advantaged" },
@@ -69,10 +76,10 @@ describe("allocate - greedy buy waterfall", () => {
     expect(result.x.get("a_brokerage")!.get("stocks")).toBe(10000);
   });
 
-  it("sends leftover cash to the fallback class and conserves each account's total", () => {
+  it("sends leftover cash to the most-preferred buyable fund and conserves each account's total", () => {
     const result = allocate(
       makeProblem({
-        accounts: [{ id: "acct", taxType: "taxable", fallbackAssetClassId: "stocks" }],
+        accounts: [{ id: "acct", taxType: "taxable" }],
         assetClasses: [
           { id: "bonds", taxPreference: "neutral" },
           { id: "stocks", taxPreference: "neutral" },
@@ -83,11 +90,13 @@ describe("allocate - greedy buy waterfall", () => {
           ["stocks", 4000],
         ]),
         current: new Map([["acct", new Map([["bonds", 6000]])]]),
-        // Only bonds can be bought here; the surplus falls back to stocks.
-        buyable: (_accountId, assetClassId) => assetClassId === "bonds",
+        // stocks is the account's most-preferred fund, so the surplus lands there.
+        preferenceRank: (_accountId, fundId) => (fundId === "stocks" ? 0 : 1),
       }),
     );
 
+    // Gaps (bonds 3000, stocks 4000) absorb 7000 of the 10000 cash; the
+    // 3000 surplus falls back to the rank-0 fund.
     const row = result.x.get("acct")!;
     expect(row.get("bonds")).toBe(9000);
     expect(row.get("stocks")).toBe(7000);
@@ -96,8 +105,8 @@ describe("allocate - greedy buy waterfall", () => {
     expect(result.warnings).toContainEqual({
       kind: "leftover_cash",
       accountId: "acct",
-      assetClassId: "stocks",
-      amount: 7000,
+      fundId: "stocks",
+      amount: 3000,
     });
   });
 });
@@ -107,8 +116,8 @@ describe("allocate - sell pass", () => {
     const result = allocate(
       makeProblem({
         accounts: [
-          { id: "acct_a", taxType: "tax_free", fallbackAssetClassId: "d" },
-          { id: "acct_b", taxType: "tax_free", fallbackAssetClassId: "d" },
+          { id: "acct_a", taxType: "tax_free" },
+          { id: "acct_b", taxType: "tax_free" },
         ],
         assetClasses: [
           { id: "c", taxPreference: "neutral" },
@@ -140,8 +149,8 @@ describe("allocate - sell pass", () => {
     const result = allocate(
       makeProblem({
         accounts: [
-          { id: "acct_a", taxType: "tax_free", fallbackAssetClassId: "d" },
-          { id: "acct_b", taxType: "tax_free", fallbackAssetClassId: "d" },
+          { id: "acct_a", taxType: "tax_free" },
+          { id: "acct_b", taxType: "tax_free" },
         ],
         assetClasses: [
           { id: "c", taxPreference: "neutral" },
@@ -172,8 +181,8 @@ describe("allocate - sell pass", () => {
     const result = allocate(
       makeProblem({
         accounts: [
-          { id: "a_taxable", taxType: "taxable", fallbackAssetClassId: "d" },
-          { id: "z_ira", taxType: "tax_deferred", fallbackAssetClassId: "d" },
+          { id: "a_taxable", taxType: "taxable" },
+          { id: "z_ira", taxType: "tax_deferred" },
         ],
         assetClasses: [
           { id: "c", taxPreference: "neutral" },
@@ -199,7 +208,7 @@ describe("allocate - sell pass", () => {
   it("sells nothing when every sellable cap is zero", () => {
     const result = allocate(
       makeProblem({
-        accounts: [{ id: "acct", taxType: "tax_free", fallbackAssetClassId: "d" }],
+        accounts: [{ id: "acct", taxType: "tax_free" }],
         assetClasses: [
           { id: "c", taxPreference: "neutral" },
           { id: "d", taxPreference: "neutral" },

@@ -39,7 +39,12 @@ The page is one screen, top to bottom:
 
 1. **Portfolio** — the builder. Asset classes (name, tax preference, and
    each class's target share, with a live "must total 100%" total line);
-   funds (ticker, optional full name, asset class); and one card per
+   funds (ticker, optional full name, asset class — or a *blend*: the class
+   dropdown's "Blend of classes…" option expands a slice-by-slice editor
+   with its own "must total 100%" check, and a multi-class fund shows a
+   "65% US Stocks · 35% International Stocks" summary that toggles that
+   editor; removing a blend's last-but-one slice bumps the survivor back to
+   100% and the row collapses to a plain dropdown); and one card per
    account: its tax type, just the funds in that account — the buyable
    menu in preference order (#1 is bought first and receives leftover
    cash; the ordered list is the solver's only fund-preference input) with

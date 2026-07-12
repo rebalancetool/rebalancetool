@@ -8,7 +8,7 @@ function minimalScenario(): Record<string, unknown> {
   return {
     portfolio: {
       assetClasses: [{ id: "stocks", name: "Stocks" }],
-      funds: [{ id: "vti", name: "VTI", assetClassId: "stocks" }],
+      funds: [{ id: "vti", name: "VTI", assetClasses: { stocks: 10000 } }],
       accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["vti"] }],
       holdings: [{ accountId: "acct", fundId: "vti", value: 1000 }],
     },
@@ -41,6 +41,29 @@ describe("validateScenario", () => {
     const doc = minimalScenario();
     delete doc.contributions;
     expect(validateScenario(doc).contributions).toEqual([]);
+  });
+
+  it("gives a migration hint for the old single-class fund format", () => {
+    const doc = minimalScenario();
+    (doc.portfolio as { funds: unknown[] }).funds = [{ id: "vti", name: "VTI", assetClassId: "stocks" }];
+    expect(() => validateScenario(doc)).toThrow(/old single-class fund format.*"stocks": 10000/s);
+  });
+
+  it("accepts blended funds and rejects non-numeric weights", () => {
+    const doc = minimalScenario();
+    (doc.portfolio as { funds: unknown[]; assetClasses: unknown[] }).assetClasses = [
+      { id: "stocks", name: "Stocks" },
+      { id: "intl", name: "Intl" },
+    ];
+    (doc.portfolio as { funds: unknown[] }).funds = [
+      { id: "vt", name: "VT", assetClasses: { stocks: 6500, intl: 3500 } },
+    ];
+    (doc.portfolio as { accounts: Array<{ availableFundIds: string[] }> }).accounts[0]!.availableFundIds = ["vt"];
+    (doc.portfolio as { holdings: Array<{ fundId: string }> }).holdings[0]!.fundId = "vt";
+    expect(validateScenario(doc).portfolio.funds[0]!.assetClasses).toEqual({ stocks: 6500, intl: 3500 });
+
+    (doc.portfolio as { funds: Array<{ assetClasses: unknown }> }).funds[0]!.assetClasses = { stocks: "6500" };
+    expect(() => validateScenario(doc)).toThrow(/funds\[0\]\.assetClasses\["stocks"\]/);
   });
 
   it("gives a migration hint for the old flat format", () => {

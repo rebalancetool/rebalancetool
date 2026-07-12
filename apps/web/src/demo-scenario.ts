@@ -5,9 +5,11 @@ import type { Scenario } from "@rebalancer/solver";
  * placeholder fixture (packages/solver/fixtures/example.json): an invented
  * household with a taxable brokerage, two IRAs, a 401(k), and an HSA. Not
  * real account data. Kept as a typed const because the fixture file is not
- * part of the solver's public exports. One deliberate difference from the
+ * part of the solver's public exports. Two deliberate differences from the
  * fixture: the web UI turns selling on by default, taxable accounts
- * included (the checkbox at the top of the page turns taxable sells off).
+ * included (the checkbox at the top of the page turns taxable sells off);
+ * and the HSA holds VT — a 65/35 US/international blend — so the fund
+ * blend editor has something to show out of the box.
  */
 export const demoScenario: Scenario = {
   portfolio: {
@@ -19,18 +21,24 @@ export const demoScenario: Scenario = {
       { id: "us_small_cap_value", name: "US Small-Cap Value", taxPreference: "prefer_tax_advantaged" },
     ],
     funds: [
-      { id: "vti", ticker: "VTI", name: "Vanguard Total Stock Market ETF", assetClassId: "us_stocks" },
-      { id: "vxus", ticker: "VXUS", name: "Vanguard Total International Stock ETF", assetClassId: "intl_stocks" },
-      { id: "bnd", ticker: "BND", name: "Vanguard Total Bond Market ETF", assetClassId: "us_bonds" },
-      { id: "bndx", ticker: "BNDX", name: "Vanguard Total International Bond ETF", assetClassId: "intl_bonds" },
-      { id: "avuv", ticker: "AVUV", name: "Avantis US Small Cap Value ETF", assetClassId: "us_small_cap_value" },
+      { id: "vti", ticker: "VTI", name: "Vanguard Total Stock Market ETF", assetClasses: { us_stocks: 10000 } },
+      { id: "vxus", ticker: "VXUS", name: "Vanguard Total International Stock ETF", assetClasses: { intl_stocks: 10000 } },
+      { id: "bnd", ticker: "BND", name: "Vanguard Total Bond Market ETF", assetClasses: { us_bonds: 10000 } },
+      { id: "bndx", ticker: "BNDX", name: "Vanguard Total International Bond ETF", assetClasses: { intl_bonds: 10000 } },
+      { id: "avuv", ticker: "AVUV", name: "Avantis US Small Cap Value ETF", assetClasses: { us_small_cap_value: 10000 } },
+      {
+        id: "vt",
+        ticker: "VT",
+        name: "Vanguard Total World Stock ETF",
+        assetClasses: { us_stocks: 6500, intl_stocks: 3500 },
+      },
     ],
     accounts: [
       { id: "taxable", name: "Taxable Brokerage", taxType: "taxable", availableFundIds: ["vti", "vxus"] },
       { id: "roth_ira", name: "Roth IRA", taxType: "tax_free", availableFundIds: ["avuv", "vti", "bnd"] },
       { id: "spouse_ira", name: "Spouse Traditional IRA", taxType: "tax_deferred", availableFundIds: ["bnd", "bndx", "vti"] },
       { id: "k401", name: "401(k)", taxType: "tax_deferred", availableFundIds: ["bnd", "vti"] },
-      { id: "hsa", name: "HSA", taxType: "tax_free", availableFundIds: ["vti", "avuv", "vxus"] },
+      { id: "hsa", name: "HSA", taxType: "tax_free", availableFundIds: ["vt", "avuv", "vxus"] },
     ],
     holdings: [
       { accountId: "taxable", fundId: "vti", value: 2000000 },
@@ -40,7 +48,7 @@ export const demoScenario: Scenario = {
       { accountId: "spouse_ira", fundId: "bnd", value: 500000 },
       { accountId: "k401", fundId: "vti", value: 1500000 },
       { accountId: "k401", fundId: "bnd", value: 500000 },
-      { accountId: "hsa", fundId: "vti", value: 200000 },
+      { accountId: "hsa", fundId: "vt", value: 200000 },
     ],
   },
   targets: [
