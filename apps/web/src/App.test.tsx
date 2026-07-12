@@ -139,7 +139,7 @@ test("uploading a scenario JSON file replaces the state", async () => {
     contributions: [{ accountId: "solo401k", amount: 5000 }],
   };
   const file = new File([JSON.stringify(uploaded)], "scenario.json", { type: "application/json" });
-  await user.upload(screen.getByLabelText("Load scenario JSON file"), file);
+  await user.upload(screen.getByLabelText("Open scenario file"), file);
 
   expect(await screen.findByLabelText("Account name (solo401k)")).toHaveValue("Solo 401(k)");
   const trades = screen.getByRole("region", { name: "Trades" });
@@ -151,7 +151,7 @@ test("uploading a broken file shows an error and keeps the current scenario", as
   render(<App initialScenario={demoScenario} />);
 
   const file = new File(["{ not json"], "broken.json", { type: "application/json" });
-  await user.upload(screen.getByLabelText("Load scenario JSON file"), file);
+  await user.upload(screen.getByLabelText("Open scenario file"), file);
 
   expect(await screen.findByText("Couldn’t load that file")).toBeInTheDocument();
   expect(screen.getByText("That file isn't valid JSON.")).toBeInTheDocument();
