@@ -53,24 +53,20 @@ function buildContributions(amounts: number[]): Contribution[] {
   return accountIds.map((accountId, i) => ({ accountId, amount: amounts[i]! }));
 }
 
-/** Random selling configuration, including buy-only, across both optimizers. */
+/** Random selling configuration, including buy-only. */
 const sellOptionsArb = fc.record({
   allowSelling: fc.boolean(),
   sellInTaxableAccounts: fc.boolean(),
-  optimizer: fc.constantFrom("greedy" as const, "lp" as const),
 });
-
-const optimizerArb = fc.constantFrom("greedy" as const, "lp" as const);
 
 describe("rebalance - properties (fast-check)", () => {
   it("never emits anything but a buy when selling is off", () => {
     fc.assert(
-      fc.property(rawWeightsArb, amountsArb, optimizerArb, (rawWeights, amounts, optimizer) => {
+      fc.property(rawWeightsArb, amountsArb, (rawWeights, amounts) => {
         const portfolio: Portfolio = { ...fixture };
         const result = rebalance(portfolio, makeTargets(rawWeights), {
           contributions: buildContributions(amounts),
           allowSelling: false,
-          optimizer,
         });
         return result.trades.every((t) => t.action === "buy");
       }),
@@ -105,13 +101,12 @@ describe("rebalance - properties (fast-check)", () => {
   it("never sells in a taxable account unless sellInTaxableAccounts is set", () => {
     const taxableAccountIds = new Set(fixture.accounts.filter((a) => a.taxType === "taxable").map((a) => a.id));
     fc.assert(
-      fc.property(rawWeightsArb, amountsArb, optimizerArb, (rawWeights, amounts, optimizer) => {
+      fc.property(rawWeightsArb, amountsArb, (rawWeights, amounts) => {
         const portfolio: Portfolio = { ...fixture };
         const result = rebalance(portfolio, makeTargets(rawWeights), {
           contributions: buildContributions(amounts),
           allowSelling: true,
           sellInTaxableAccounts: false,
-          optimizer,
         });
         return result.trades.every((t) => t.action === "buy" || !taxableAccountIds.has(t.accountId));
       }),
@@ -120,7 +115,7 @@ describe("rebalance - properties (fast-check)", () => {
 
   it("never sells an asset class below its target dollars", () => {
     fc.assert(
-      fc.property(rawWeightsArb, amountsArb, optimizerArb, (rawWeights, amounts, optimizer) => {
+      fc.property(rawWeightsArb, amountsArb, (rawWeights, amounts) => {
         const portfolio: Portfolio = { ...fixture };
         const targets = makeTargets(rawWeights);
         const contributions = buildContributions(amounts);
@@ -128,7 +123,6 @@ describe("rebalance - properties (fast-check)", () => {
           contributions,
           allowSelling: true,
           sellInTaxableAccounts: true,
-          optimizer,
         });
 
         const newTotal =
@@ -164,9 +158,9 @@ describe("rebalance - properties (fast-check)", () => {
     );
   });
 
-  it("holds the core invariants with a blended fund in the mix (lp engine)", () => {
+  it("holds the core invariants with a blended fund in the mix", () => {
     // The fixture plus VT (65% US / 35% intl), buyable and held in the
-    // taxable account. Blends require the lp engine (greedy rejects them).
+    // taxable account.
     const blendedPortfolio: Portfolio = {
       ...fixture,
       funds: [

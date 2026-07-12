@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { allocate } from "./allocate.ts";
+import { allocateLp } from "./allocate.lp.ts";
 import type { TransportationProblem } from "./allocate.ts";
 
 /**
- * These tests exercise the seam in class-space terms: each asset class gets
- * exactly one single-class fund whose id *is* the class id, so `current` and
- * `x` read the same whether you think in funds or classes.
+ * Seam-level contracts of the allocator, in class-space terms: each asset
+ * class gets exactly one single-class fund whose id *is* the class id, so
+ * `current` and `x` read the same whether you think in funds or classes.
+ * Only behaviors the seam promises are tested here — placements that are
+ * merely one of several equal optima belong in the property tests.
  */
 function makeProblem(partial: Partial<TransportationProblem>): TransportationProblem {
   return {
@@ -24,34 +26,9 @@ function makeProblem(partial: Partial<TransportationProblem>): TransportationPro
   };
 }
 
-describe("allocate - greedy buy waterfall", () => {
-  it("drains the biggest gap first and reports what cash could not reach", () => {
-    const result = allocate(
-      makeProblem({
-        accounts: [{ id: "acct", taxType: "taxable" }],
-        assetClasses: [
-          { id: "big", taxPreference: "neutral" },
-          { id: "small", taxPreference: "neutral" },
-        ],
-        cash: new Map([["acct", 8000]]),
-        demands: new Map([
-          ["big", 10000],
-          ["small", 5000],
-        ]),
-      }),
-    );
-
-    // All $80 goes to the $100 gap; both classes end short and are warned about.
-    expect(result.x.get("acct")!.get("big")).toBe(8000);
-    expect(result.x.get("acct")!.get("small")).toBeUndefined();
-    expect(result.warnings).toEqual([
-      { kind: "unreachable_gap", assetClassId: "small", remainingGap: 5000 },
-      { kind: "unreachable_gap", assetClassId: "big", remainingGap: 2000 },
-    ]);
-  });
-
+describe("allocateLp - buying", () => {
   it("routes a prefer_tax_advantaged class to the tax-advantaged account even when id order disagrees", () => {
-    const result = allocate(
+    const result = allocateLp(
       makeProblem({
         accounts: [
           { id: "a_brokerage", taxType: "taxable" },
@@ -76,8 +53,8 @@ describe("allocate - greedy buy waterfall", () => {
     expect(result.x.get("a_brokerage")!.get("stocks")).toBe(10000);
   });
 
-  it("sends leftover cash to the most-preferred buyable fund and conserves each account's total", () => {
-    const result = allocate(
+  it("sends surplus cash to the most-preferred fund and conserves each account's total", () => {
+    const result = allocateLp(
       makeProblem({
         accounts: [{ id: "acct", taxType: "taxable" }],
         assetClasses: [
@@ -90,30 +67,25 @@ describe("allocate - greedy buy waterfall", () => {
           ["stocks", 4000],
         ]),
         current: new Map([["acct", new Map([["bonds", 6000]])]]),
-        // stocks is the account's most-preferred fund, so the surplus lands there.
+        // stocks is the account's most-preferred fund, so once every gap is
+        // closed the 3000 surplus lands there (the fund-preference stage).
         preferenceRank: (_accountId, fundId) => (fundId === "stocks" ? 0 : 1),
       }),
     );
 
-    // Gaps (bonds 3000, stocks 4000) absorb 7000 of the 10000 cash; the
-    // 3000 surplus falls back to the rank-0 fund.
     const row = result.x.get("acct")!;
     expect(row.get("bonds")).toBe(9000);
     expect(row.get("stocks")).toBe(7000);
     const total = [...row.values()].reduce((sum, v) => sum + v, 0);
     expect(total).toBe(6000 + 10000);
-    expect(result.warnings).toContainEqual({
-      kind: "leftover_cash",
-      accountId: "acct",
-      fundId: "stocks",
-      amount: 3000,
-    });
+    // Surplus is not warning-worthy: the tables show where it went.
+    expect(result.warnings).toEqual([]);
   });
 });
 
-describe("allocate - sell pass", () => {
+describe("allocateLp - selling", () => {
   it("never sells a class below its portfolio-level demand, even across accounts", () => {
-    const result = allocate(
+    const result = allocateLp(
       makeProblem({
         accounts: [
           { id: "acct_a", taxType: "tax_free" },
@@ -132,7 +104,7 @@ describe("allocate - sell pass", () => {
           ["acct_b", new Map([["d", 5000]])],
         ]),
         // Only acct_a can buy the underweight class.
-        buyable: (accountId, assetClassId) => assetClassId !== "c" || accountId === "acct_a",
+        buyable: (accountId, fundId) => fundId !== "c" || accountId === "acct_a",
         sellable: () => Number.MAX_SAFE_INTEGER,
       }),
     );
@@ -146,7 +118,7 @@ describe("allocate - sell pass", () => {
   });
 
   it("stops selling when the buying account runs out of overweight holdings and warns", () => {
-    const result = allocate(
+    const result = allocateLp(
       makeProblem({
         accounts: [
           { id: "acct_a", taxType: "tax_free" },
@@ -164,7 +136,7 @@ describe("allocate - sell pass", () => {
           ["acct_a", new Map([["d", 3000]])],
           ["acct_b", new Map([["d", 12000]])],
         ]),
-        buyable: (accountId, assetClassId) => assetClassId !== "c" || accountId === "acct_a",
+        buyable: (accountId, fundId) => fundId !== "c" || accountId === "acct_a",
         sellable: () => Number.MAX_SAFE_INTEGER,
       }),
     );
@@ -178,7 +150,7 @@ describe("allocate - sell pass", () => {
   });
 
   it("prefers selling in a tax-advantaged account even when id order disagrees", () => {
-    const result = allocate(
+    const result = allocateLp(
       makeProblem({
         accounts: [
           { id: "a_taxable", taxType: "taxable" },
@@ -206,7 +178,7 @@ describe("allocate - sell pass", () => {
   });
 
   it("sells nothing when every sellable cap is zero", () => {
-    const result = allocate(
+    const result = allocateLp(
       makeProblem({
         accounts: [{ id: "acct", taxType: "tax_free" }],
         assetClasses: [

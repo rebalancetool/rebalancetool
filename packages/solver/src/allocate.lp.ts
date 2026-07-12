@@ -11,8 +11,8 @@ import type {
 import { TOTAL_BPS } from "./types.ts";
 
 /**
- * LP-backed allocate(): the default engine, behind the same
- * TransportationProblem seam as the greedy waterfall. The decision variables
+ * The allocator: an LP behind the TransportationProblem seam defined in
+ * allocate.ts. The decision variables
  * are the final cents per (account × fund) — not per asset class — so a
  * blended fund (VT = 65% US + 35% intl) is handled natively: buying or
  * selling it moves every component in lockstep, and each asset class's
@@ -33,11 +33,11 @@ import { TOTAL_BPS } from "./types.ts";
  * Hard constraints: each account's total is fixed (money never leaves an
  * account), non-buyable positions can't grow, sells respect the caller's
  * caps, and no asset class's total may drop below min(current, target) —
- * the same never-sell-below-target guarantee the greedy pass makes. For a
+ * the never-sell-below-target guarantee. For a
  * blended fund that floor binds the *class* exposure, so selling a blend is
  * allowed exactly when every component stays above its own floor.
  *
- * The tolerance band works exactly like the greedy allocator's: it is an
+ * The tolerance band is an
  * *eligibility* test on the inputs, not a stopping zone. A class whose
  * initial drift exceeds the band is penalized against its exact target
  * (fix fully); a class already within the band is frozen against selling
@@ -48,8 +48,8 @@ import { TOTAL_BPS } from "./types.ts";
  * minTradeCents is honored by iterative refinement (a "0 or ≥ threshold"
  * sell is not expressible in a single LP): solve, ban selling any position
  * whose sell came out below the floor, re-solve; repeat until every sell
- * clears the floor or doesn't happen — the same semantics as the greedy
- * sell pass. Terminates in at most one solve per sellable position.
+ * clears the floor or doesn't happen. Terminates in at most one solve per
+ * sellable position.
  *
  * The simplex works in floats; positions the solver left (near-)untouched
  * are snapped back to exactly their current value — so rounding noise never
@@ -189,11 +189,10 @@ export function allocateLp(problem: TransportationProblem): Allocation {
     x.set(account.id, row);
   }
 
-  // Same warning contract as the greedy allocator: gaps beyond the band
-  // that survived, largest first. Class exposure is computed exactly in
-  // integer cent-basis-points from the rounded fund values. (leftover_cash
-  // never applies here — the objective, not a fallback rule, decides where
-  // surplus cash lands.)
+  // Warnings: gaps beyond the band that survived, largest first. Class
+  // exposure is computed exactly in integer cent-basis-points from the
+  // rounded fund values. (Surplus cash never warrants one — the objective
+  // decides where it lands, ultimately the most-preferred funds.)
   const finalCentBps = new Map<string, number>();
   for (const assetClass of problem.assetClasses) finalCentBps.set(assetClass.id, 0);
   for (const account of accounts) {
@@ -238,8 +237,8 @@ function solveLexicographic(
   let hasPreferences = false;
   let hasFundPreferences = false;
 
-  // Band as eligibility, computed from the inputs (mirrors the greedy
-  // allocator): a class drifted beyond the band is "active" and penalized
+  // Band as eligibility, computed from the inputs: a class drifted
+  // beyond the band is "active" and penalized
   // against its exact target; a class within the band is left alone —
   // no penalty, but its total may never shrink. Exposures are exact
   // integers in cent-basis-points (cents × weight), so the test never

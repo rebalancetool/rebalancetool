@@ -1,4 +1,3 @@
-import { allocate } from "./allocate.ts";
 import { allocateLp } from "./allocate.lp.ts";
 import type { TransportationProblem } from "./allocate.ts";
 import { DEFAULT_TOLERANCE_BPS, TOTAL_BPS } from "./types.ts";
@@ -14,84 +13,50 @@ import type {
 } from "./types.ts";
 
 /**
- * ALGORITHM: greedy waterfall — a buy pass, then an optional sell pass.
+ * Orchestration around the LP allocator (see allocate.lp.ts for the
+ * optimization itself).
  *
  * By default (allowSelling: false) this solver only ever recommends
  * purchases. It cannot then force a portfolio to exactly match its targets
  * in one pass — it can only spend new contribution cash to move the
  * portfolio *toward* target; given enough contributions over time, repeated
- * runs converge. With allowSelling: true, a second pass additionally sells
- * overweight positions to fund still-underweight classes *within the same
- * account* (cash raised by a sell never leaves its account), never selling
- * a class below its portfolio-level target, preferring sells in
- * tax-advantaged accounts, and never touching taxable positions unless
- * sellInTaxableAccounts is also set.
+ * runs converge. With allowSelling: true, it additionally sells overweight
+ * positions to fund underweight classes *within the same account* (cash
+ * raised by a sell never leaves its account), never selling a class below
+ * its portfolio-level target, preferring sells in tax-advantaged accounts,
+ * and never touching taxable positions unless sellInTaxableAccounts is also
+ * set. Everything is governed by the tolerance band (toleranceBps, default
+ * 50): a class within ±band of its target weight is treated as on-target —
+ * not bought toward, not sold down, not warned about — so trivial drift
+ * never triggers trades. Contributions are always fully invested: cash may
+ * not sit idle in an account, so surplus beyond every reachable gap is
+ * still placed (the fund-preference objective sends it to the account's
+ * most-preferred funds).
  *
- * Structurally, rebalance() reduces its inputs to a TransportationProblem
- * in (account × fund) space and delegates the placement decision to
- * allocate() (see allocate.ts — the optimizer-swappable seam); demands stay
- * in asset-class space, and each fund's class weights connect the two. A
- * fund may blend several asset classes (VT = 65% US + 35% intl); its buys
- * and sells move every component in lockstep, which the default LP engine
- * handles natively. The greedy engine predates blends and only supports
- * single-class funds (rebalance() rejects the combination up front). Steps
- * 3-5 below describe the greedy placement allocate() implements; the
- * allocator returns final per-(account × fund) values, which rebalance()
- * translates into Trades with human-readable reasons.
+ * The steps here are bookkeeping, not decisions:
  *
- * Given a Portfolio and a set of Contributions (each earmarked to one
- * account — money never moves between accounts, mirroring the real-world
- * constraint that you can't deposit a 401k payroll contribution into an
- * IRA), the steps are:
+ *   1. Sum current holdings per (account × fund); contributions per account
+ *      (each earmarked to one account — money never moves between accounts,
+ *      mirroring the real-world constraint that you can't deposit a 401k
+ *      payroll contribution into an IRA).
+ *   2. Compute each asset class's target dollars at the post-contribution
+ *      portfolio total (largest-remainder rounding so targets sum exactly
+ *      to that total despite integer-cent truncation).
+ *   3. Hand the resulting TransportationProblem (see allocate.ts) to
+ *      allocateLp(), which returns final per-(account × fund) values. A
+ *      fund may blend several asset classes (VT = 65% US + 35% intl); its
+ *      buys and sells move every component in lockstep, which the LP
+ *      encodes natively.
+ *   4. Translate the deltas into Trades with human-readable reasons,
+ *      per-account breakdowns, the resulting allocation (a blend's value
+ *      split across its component classes by largest remainder), and
+ *      warnings for gaps that are structurally stuck.
  *
- *   1. Sum current holdings by asset class across *all* accounts combined,
- *      using nominal (not tax-adjusted) dollar values (a blended fund's
- *      value counts toward each component class in proportion to its
- *      weights).
- *   2. Add every contribution to the portfolio total to get the
- *      post-contribution total portfolio value, then compute each asset
- *      class's target dollar value at that new total (largest-remainder
- *      rounding so target dollars sum exactly to the new total despite
- *      integer-cent truncation). Each asset class's "gap" is
- *      max(0, targetDollars - currentDollars) — never negative, since we
- *      only buy.
- *   3. Repeatedly: find the asset class with the single largest remaining
- *      gap (ties broken by assetClassId for determinism). Among accounts
- *      that (a) still have uninvested contribution cash and (b) offer at
- *      least one fund in that asset class, rank them by the asset class's
- *      taxPreference (e.g. bonds usually want prefer_tax_advantaged
- *      accounts first) and then by account id. Buy into the highest-ranked
- *      account, choosing the earliest fund in that account's ordered
- *      availableFundIds among funds belonging to the target asset class.
- *      Spend min(gap, remaining cash in that account). This is a "waterfall"
- *      because each pass drains the biggest gap first; once a gap is fully
- *      closed or every eligible account runs dry, the next-biggest gap
- *      becomes the target.
- *   4. If no eligible account exists at all for an asset class's gap (no
- *      account with remaining cash offers a fund in it), the buy pass moves
- *      on to the next-largest gap rather than stalling. When selling is
- *      enabled, a sell pass then retries every remaining gap: it finds an
- *      account that can buy the underweight class and holds an overweight
- *      one, sells the overweight position (least-preferred fund first) and
- *      redeploys the proceeds in place. Any gap that survives both passes
- *      is reported as a warning. Everything is governed by the tolerance
- *      band (toleranceBps, default 50): a class within ±band of its target
- *      weight is treated as on-target — not bought toward, not sold down,
- *      not "fixed" by selling, and not warned about — so trivial drift never
- *      triggers trades.
- *   5. Contributions must be fully invested — cash cannot be left
- *      sitting idle in an account. So once every gap reachable from an
- *      account's contribution has been closed (or is permanently blocked),
- *      any cash still remaining in that account is invested into that
- *      account's single most-preferred fund (availableFundIds[0]), with a
- *      warning explaining why (this can happen when a contribution is larger
- *      than needed to close that account's share of the gaps).
- *
- * Every trade carries a human-readable `reason`. All money math is done in
- * integer cents; all weights are integer basis points. Iteration never
- * depends on input array order — every tie is broken by a stable id
- * comparison — so the result is identical no matter how the caller orders
- * accounts, funds, holdings, or targets.
+ * All money math is done in integer cents; all weights are integer basis
+ * points. Nothing depends on input array order — every tie is broken by a
+ * stable id comparison and the LP model is built in sorted order — so the
+ * result is identical no matter how the caller orders accounts, funds,
+ * holdings, or targets.
  */
 export function rebalance(portfolio: Portfolio, targets: Target[], options: RebalanceOptions): RebalanceResult {
   validate(portfolio, targets, options);
@@ -103,7 +68,6 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   const allowSelling = options.allowSelling ?? false;
   const sellInTaxableAccounts = options.sellInTaxableAccounts ?? false;
   const toleranceBps = options.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
-  const optimizer = options.optimizer ?? "lp";
   const minTradeCents = options.minTradeCents ?? 0;
 
   // Positive-weight composition per fund (zero-weight entries are edit-time
@@ -111,16 +75,6 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   const weightsByFund = new Map<string, Map<string, number>>(
     portfolio.funds.map((f) => [f.id, new Map(Object.entries(f.assetClasses).filter(([, weight]) => weight > 0))]),
   );
-
-  if (optimizer === "greedy") {
-    const blended = portfolio.funds.find((f) => weightsByFund.get(f.id)!.size > 1);
-    if (blended !== undefined) {
-      throw new Error(
-        `The "greedy" optimizer only supports single-asset-class funds, but "${blended.id}" blends ` +
-          `${weightsByFund.get(blended.id)!.size} classes. Use the default "lp" optimizer.`,
-      );
-    }
-  }
 
   // --- Step 1: current holdings per account, by fund ---
   const heldFundValues = new Map<string, Map<string, number>>();
@@ -184,13 +138,9 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     minTradeCents,
   };
 
-  const allocation = optimizer === "lp" ? allocateLp(problem) : allocate(problem);
+  const allocation = allocateLp(problem);
 
   // --- translate allocation deltas (x[a][f] - H[a][f]) into trades ---
-  const leftoverByAccount = new Map<string, { fundId: string; amount: number }>();
-  for (const w of allocation.warnings) {
-    if (w.kind === "leftover_cash") leftoverByAccount.set(w.accountId, w);
-  }
 
   /** "65% US Stocks, 35% International Stocks" — a blend's composition for trade reasons. */
   const describeBlend = (weights: Map<string, number>): string =>
@@ -212,31 +162,17 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       const label = fund.ticker ?? fund.name;
       const soleClassId = weights.size === 1 ? weights.keys().next().value! : undefined;
       if (delta > 0) {
-        const leftover = leftoverByAccount.get(account.id);
-        const leftoverPart = leftover !== undefined && leftover.fundId === fundId ? leftover.amount : 0;
-        const gapPart = delta - leftoverPart;
-        const reasons: string[] = [];
-        if (gapPart > 0) {
-          reasons.push(
-            soleClassId !== undefined
-              ? `${assetClassesById.get(soleClassId)!.name} is below target; buying ${formatDollars(gapPart)} of ` +
-                  `${label} in ${account.name}.`
-              : `Buying ${formatDollars(gapPart)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
-                  `to close underweight asset classes.`,
-          );
-        }
-        if (leftoverPart > 0) {
-          reasons.push(
-            `Investing ${formatDollars(leftoverPart)} of leftover contribution cash in ${label}, ` +
-              `the most-preferred fund of ${account.name}.`,
-          );
-        }
         trades.push({
           accountId: account.id,
           fundId,
           action: "buy",
           amount: delta,
-          reason: reasons.join(" "),
+          reason:
+            soleClassId !== undefined
+              ? `${assetClassesById.get(soleClassId)!.name} is below target; buying ${formatDollars(delta)} of ` +
+                `${label} in ${account.name}.`
+              : `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+                `to close underweight asset classes.`,
         });
       } else {
         trades.push({
@@ -269,46 +205,32 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   // that do got no cash, or selling was enabled but blocked.
   const warnings: string[] = [];
   for (const w of allocation.warnings) {
-    switch (w.kind) {
-      case "unreachable_gap": {
-        const assetClass = assetClassesById.get(w.assetClassId)!;
-        if (allowSelling) {
-          warnings.push(
-            `${assetClass.name} is still ${formatDollars(w.remainingGap)} under target even with selling enabled` +
-              (sellInTaxableAccounts ? "." : " (selling in taxable accounts is disabled)."),
-          );
-          break;
-        }
-        const offering = portfolio.accounts
-          .filter((account) => accountHasFundFor(account, w.assetClassId, weightsByFund))
-          .sort((a, b) => a.id.localeCompare(b.id));
-        if (offering.length === 0) {
-          warnings.push(
-            `${assetClass.name} is ${formatDollars(w.remainingGap)} under target, but no account offers a fund for it.`,
-          );
-        } else if (offering.every((account) => (accountCash.get(account.id) ?? 0) === 0)) {
-          const names = offering.map((account) => account.name).join(", ");
-          warnings.push(
-            `${assetClass.name} is ${formatDollars(w.remainingGap)} under target, but ` +
-              (offering.length === 1
-                ? `only ${names} offers a fund for it, and it received no contribution.`
-                : `the accounts offering a fund for it (${names}) received no contributions.`),
-          );
-        }
-        // Otherwise: funded accounts offer it and the cash simply went to
-        // bigger gaps — visible in the allocation, not warning-worthy.
-        break;
-      }
-      case "leftover_cash": {
-        const account = accountsById.get(w.accountId)!;
-        const fund = fundsById.get(w.fundId)!;
-        warnings.push(
-          `${account.name} had ${formatDollars(w.amount)} of contribution left after closing every reachable gap; ` +
-            `invested it in ${fund.ticker ?? fund.name}, its most-preferred fund.`,
-        );
-        break;
-      }
+    const assetClass = assetClassesById.get(w.assetClassId)!;
+    if (allowSelling) {
+      warnings.push(
+        `${assetClass.name} is still ${formatDollars(w.remainingGap)} under target even with selling enabled` +
+          (sellInTaxableAccounts ? "." : " (selling in taxable accounts is disabled)."),
+      );
+      continue;
     }
+    const offering = portfolio.accounts
+      .filter((account) => accountHasFundFor(account, w.assetClassId, weightsByFund))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (offering.length === 0) {
+      warnings.push(
+        `${assetClass.name} is ${formatDollars(w.remainingGap)} under target, but no account offers a fund for it.`,
+      );
+    } else if (offering.every((account) => (accountCash.get(account.id) ?? 0) === 0)) {
+      const names = offering.map((account) => account.name).join(", ");
+      warnings.push(
+        `${assetClass.name} is ${formatDollars(w.remainingGap)} under target, but ` +
+          (offering.length === 1
+            ? `only ${names} offers a fund for it, and it received no contribution.`
+            : `the accounts offering a fund for it (${names}) received no contributions.`),
+      );
+    }
+    // Otherwise: funded accounts offer it and the cash simply went to
+    // bigger gaps — visible in the allocation, not warning-worthy.
   }
 
   // --- per-account before/after breakdown ---
@@ -537,8 +459,5 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     if (!Number.isInteger(options.minTradeCents) || options.minTradeCents < 0) {
       throw new Error(`minTradeCents must be a non-negative integer number of cents, got ${options.minTradeCents}.`);
     }
-  }
-  if (options.optimizer !== undefined && options.optimizer !== "greedy" && options.optimizer !== "lp") {
-    throw new Error(`optimizer must be "greedy" or "lp", got ${JSON.stringify(options.optimizer)}.`);
   }
 }

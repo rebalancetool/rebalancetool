@@ -133,11 +133,12 @@ function parseContribution(value: unknown, index: number): Contribution {
 
 function parseOptions(value: unknown): Omit<RebalanceOptions, "contributions"> {
   const record = requireRecord(value, "options");
-  checkKnownKeys(
-    record,
-    ["allowSelling", "sellInTaxableAccounts", "toleranceBps", "minTradeCents", "optimizer"],
-    "options",
-  );
+  if (record.optimizer !== undefined) {
+    throw new Error(
+      '"options.optimizer" was removed — the linear-program allocator is now the only engine. Delete the key.',
+    );
+  }
+  checkKnownKeys(record, ["allowSelling", "sellInTaxableAccounts", "toleranceBps", "minTradeCents"], "options");
   const options: Omit<RebalanceOptions, "contributions"> = {};
   if (record.allowSelling !== undefined) {
     options.allowSelling = requireBoolean(record.allowSelling, "options.allowSelling");
@@ -150,9 +151,6 @@ function parseOptions(value: unknown): Omit<RebalanceOptions, "contributions"> {
   }
   if (record.minTradeCents !== undefined) {
     options.minTradeCents = requireNumber(record.minTradeCents, "options.minTradeCents");
-  }
-  if (record.optimizer !== undefined) {
-    options.optimizer = requireOneOf(record.optimizer, ["greedy", "lp"] as const, "options.optimizer");
   }
   return options;
 }

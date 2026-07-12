@@ -64,7 +64,7 @@ function groupTradesByAccount(trades: Trade[]): { accountId: string; trades: Tra
 
 /**
  * Settings that differ from what the page presents as normal (selling on,
- * default tolerance, no trade floor, LP engine), summarized so tucked-away
+ * default tolerance, no trade floor), summarized so tucked-away
  * settings can never invisibly shape the results. The taxable-sell guard
  * isn't listed: its checkbox is always visible at the top of the page.
  */
@@ -75,7 +75,6 @@ function describeNonDefaultOptions(options: Scenario["options"]): string | null 
   if (tolerance !== DEFAULT_TOLERANCE_BPS) notes.push(`tolerance ±${formatBpsAsPercent(tolerance)}`);
   const minTrade = options?.minTradeCents ?? 0;
   if (minTrade > 0) notes.push(`min trade ${formatCents(minTrade)}`);
-  if (options?.optimizer === "greedy") notes.push("greedy engine");
   return notes.length > 0 ? notes.join(" · ") : null;
 }
 

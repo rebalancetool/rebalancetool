@@ -57,19 +57,6 @@ export function OptionsEditor({ scenario, onChange }: EditorProps) {
           label="Minimum sell-funded trade"
         />
       </div>
-      <div className="field-row">
-        <span className="field-label">Optimizer</span>
-        <select
-          aria-label="Optimizer"
-          value={options.optimizer ?? "lp"}
-          onChange={(event) =>
-            onChange(withOptions(scenario, { optimizer: event.target.value === "greedy" ? "greedy" : "lp" }))
-          }
-        >
-          <option value="lp">LP (optimal)</option>
-          <option value="greedy">Greedy waterfall</option>
-        </select>
-      </div>
     </div>
   );
 }

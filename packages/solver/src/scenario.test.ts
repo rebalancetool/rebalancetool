@@ -43,6 +43,12 @@ describe("validateScenario", () => {
     expect(validateScenario(doc).contributions).toEqual([]);
   });
 
+  it("rejects the removed options.optimizer with a hint", () => {
+    const doc = minimalScenario();
+    (doc.options as Record<string, unknown>).optimizer = "greedy";
+    expect(() => validateScenario(doc)).toThrow(/"options\.optimizer" was removed/);
+  });
+
   it("gives a migration hint for the old single-class fund format", () => {
     const doc = minimalScenario();
     (doc.portfolio as { funds: unknown[] }).funds = [{ id: "vti", name: "VTI", assetClassId: "stocks" }];

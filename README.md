@@ -44,44 +44,33 @@ shape a future UI would save/load):
     a sell either clears the floor or doesn't happen. (Contribution cash is
     always fully invested, however small — cash may not sit idle in an
     account.)
-  - `optimizer` (default `"lp"`) — the allocation engine. `"lp"` solves the
-    placement as a linear program ([YALPS](https://github.com/Ivordir/YALPS))
-    over per-(account × fund) positions: provably minimal deviation, then
-    minimal selling, then minimal *taxable* selling, then tax-preferred
-    placement, then fund-preference order — and it can *relocate* a class
-    between accounts when restricted fund menus require it (e.g. sell bonds
-    in the IRA to finish funding international there, while the 401(k) buys
-    the bonds back). Blended funds are native to it: it can even sell VT and
-    buy back the international slice with VXUS to shed only the US excess.
-    `"greedy"` is the original two-pass waterfall: dependency-free and
-    integer-exact, but it only ever sells globally-overweight classes, so it
-    can leave a residual gap on exactly those restricted-menu portfolios —
-    and it predates blends, so it rejects portfolios containing a
-    multi-class fund. Both honor the same invariants.
 
-**Algorithm.** The default `"lp"` engine solves the placement directly as a
-linear program (see the comment atop `packages/solver/src/allocate.lp.ts`).
-The `"greedy"` engine is a waterfall in two passes — full detail in the
-comment block atop `packages/solver/src/rebalance.ts`; the shared framing
-(steps 1 and 4 apply to both engines):
+**Algorithm.** The placement is solved as a linear program
+([YALPS](https://github.com/Ivordir/YALPS)) over per-(account × fund)
+positions, with a lexicographic objective — provably minimal deviation, then
+minimal selling, then minimal *taxable* selling, then tax-preferred
+placement, then fund-preference order (full detail in the comment atop
+`packages/solver/src/allocate.lp.ts`):
 
-1. Sum current holdings by asset class across all accounts, and compute each
-   asset class's target dollar value at the post-contribution total. Gaps or
-   excesses within the tolerance band are treated as zero.
-2. **Buy pass** — repeatedly find the asset class furthest below target and
-   buy into it using contribution cash from the best eligible account,
-   ranked by the asset class's `taxPreference` (e.g. bonds prefer
-   tax-advantaged accounts), then by account id. Leftover cash that can't
-   reach any gap is invested in the account's most-preferred fund.
-3. **Sell pass** (only with `allowSelling`) — for each class still
-   underweight, find an account that can buy it *and* holds an overweight
-   class; sell the overweight position (least-preferred fund first) and
-   redeploy the proceeds in the same account. Every sell draws down a global
-   excess budget, so no class is ever sold below its own target; sells
-   prefer tax-advantaged accounts, and skip taxable ones entirely unless
-   `sellInTaxableAccounts` is set.
-4. Any gap that survives both passes is reported as a warning, not silently
-   dropped. Every trade carries a human-readable `reason`.
+1. Current holdings are summed by asset class across all accounts (a blended
+   fund's value counts toward each component class in proportion to its
+   weights), and each class's target dollar value is computed at the
+   post-contribution total. Gaps or excesses within the tolerance band are
+   treated as zero.
+2. The LP then finds the final position values that minimize the remaining
+   deviation, subject to the hard constraints: money never leaves an
+   account, non-buyable positions can't grow, no class is ever sold below
+   its own target, and — without `allowSelling` / `sellInTaxableAccounts` —
+   the corresponding positions can't shrink at all. Because it optimizes
+   globally, it can *relocate* a class between accounts when restricted fund
+   menus require it (e.g. sell bonds in the IRA to finish funding
+   international there, while the 401(k) buys the bonds back), and blended
+   funds are native: it can even sell VT and buy back the international
+   slice with VXUS to shed only the US excess.
+3. Contribution cash is always fully invested — surplus beyond every
+   reachable gap lands in the account's most-preferred funds.
+4. Any gap that survives is reported as a warning, not silently dropped.
+   Every trade carries a human-readable `reason`.
 
 **Output** (`RebalanceResult`): the list of `trades` (buys *and* sells), a
 per-account before/after breakdown (`accounts`: contribution, totals, and
@@ -97,11 +86,10 @@ has no notion of a request/response cycle to adapt.
 
 Internally, `rebalance()` reduces its input to a fixed-supply transportation
 problem in (account × fund) space — asset-class demands connected to fund
-positions through each fund's class weights — and delegates placement behind
-a deliberate seam: the LP in `packages/solver/src/allocate.lp.ts` by
-default, or the greedy waterfall in `allocate.ts` with
-`optimizer: "greedy"`. A brute-force reference in the property tests holds
-both implementations to the same optimality bar.
+positions through each fund's class weights (the seam defined in
+`packages/solver/src/allocate.ts`) — and delegates placement to the LP in
+`allocate.lp.ts`. A brute-force reference in the property tests holds the
+LP to the true optimum on every small problem it can enumerate.
 
 ## Project layout
 
@@ -161,7 +149,6 @@ override the file:
     --sell-taxable                          also allow sells in taxable accounts (implies --sell)
     --tolerance-bps <n>                     tolerance band in basis points
     --min-trade-cents <n>                   minimum sell-funded trade size
-    --optimizer <greedy|lp>                 allocation engine (default lp)
 ```
 
 Try it against the placeholder fixtures:
@@ -189,7 +176,7 @@ tables already show.
 
 ## Scope
 
-Built so far: domain types, the two-pass solver (buy-only by default,
+Built so far: domain types, the LP solver (buy-only by default,
 opt-in selling with tax-aware guards and tolerance bands), the canonical
 JSON scenario format with `validateScenario()`, the test suite (golden
 fixtures + invariant + property-based tests, including a brute-force

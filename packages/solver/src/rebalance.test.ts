@@ -25,10 +25,9 @@ describe("rebalance - golden fixture", () => {
   // evenly at that total, so gaps are exact. us_stocks is already overweight
   // (gap 0). intl_bonds only exists in spouse_ira's fund menu, which gets no
   // contribution, so its $6,060 gap is unreachable this run. Every split of
-  // the $600 across the underfunded classes is equally optimal; the default
-  // (lp) engine routes the HSA's $50 to AVUV (its tax preference), where the
-  // greedy waterfall's biggest-gap-first rule sends it to VXUS instead.
-  it("produces the expected trades for the example household (default lp engine)", () => {
+  // the $600 across the underfunded classes is equally optimal; the engine
+  // routes the HSA's $50 to AVUV (its tax preference).
+  it("produces the expected trades for the example household", () => {
     const { portfolio, targets, contributions } = loadExample();
     const result = rebalance(portfolio, targets, { contributions });
 
@@ -42,19 +41,6 @@ describe("rebalance - golden fixture", () => {
     for (const trade of result.trades) {
       expect(trade.reason.length).toBeGreaterThan(0);
     }
-  });
-
-  it("produces the expected trades for the example household (greedy engine)", () => {
-    const { portfolio, targets, contributions } = loadExample();
-    const result = rebalance(portfolio, targets, { contributions, optimizer: "greedy" });
-
-    expect(
-      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
-    ).toEqual([
-      { accountId: "hsa", fundId: "vxus", action: "buy", amount: 5000 },
-      { accountId: "k401", fundId: "bnd", action: "buy", amount: 15000 },
-      { accountId: "taxable", fundId: "vxus", action: "buy", amount: 40000 },
-    ]);
   });
 
   it("never touches the already-overweight fund and warns only about actionable gaps", () => {
@@ -164,39 +150,7 @@ describe("rebalance - selling (golden fixture)", () => {
   });
 });
 
-describe("rebalance - lp optimizer", () => {
-  it("solves the selling golden identically to greedy (the optimum is unique)", () => {
-    const { portfolio, targets, contributions } = loadFixture(sellRequiredFixture);
-    const result = rebalance(portfolio, targets, { contributions, allowSelling: true, optimizer: "lp" });
-
-    expect(
-      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
-    ).toEqual([
-      { accountId: "ira", fundId: "vti", action: "sell", amount: 4000000 },
-      { accountId: "ira", fundId: "bnd", action: "buy", amount: 4000000 },
-    ]);
-    expect(result.warnings).toEqual([]);
-    for (const deviation of result.deviationFromTarget) {
-      expect(deviation.deviationBps).toBe(0);
-    }
-  });
-
-  it("matches greedy's total deviation on the buy-only example and conserves every account", () => {
-    const { portfolio, targets, contributions } = loadExample();
-    const greedy = rebalance(portfolio, targets, { contributions });
-    const lp = rebalance(portfolio, targets, { contributions, optimizer: "lp" });
-
-    const totalAbsDeviation = (entries: typeof greedy.resultingAllocation): number =>
-      entries.reduce((sum, e) => sum + Math.abs(e.value - e.targetValue), 0);
-    // Equally-optimal placements may differ, but the LP can never do worse.
-    expect(totalAbsDeviation(lp.resultingAllocation)).toBeLessThanOrEqual(
-      totalAbsDeviation(greedy.resultingAllocation),
-    );
-    for (const breakdown of lp.accounts) {
-      expect(breakdown.finalTotal).toBe(breakdown.currentTotal + breakdown.contribution);
-    }
-  });
-
+describe("rebalance - minTradeCents refinement", () => {
   it("honors minTradeCents: a sell either clears the floor or does not happen", () => {
     const { portfolio, targets, contributions } = loadFixture(sellRequiredFixture);
 
@@ -204,7 +158,6 @@ describe("rebalance - lp optimizer", () => {
     const allowed = rebalance(portfolio, targets, {
       contributions,
       allowSelling: true,
-      optimizer: "lp",
       minTradeCents: 500,
     });
     expect(allowed.trades).toHaveLength(2);
@@ -215,19 +168,11 @@ describe("rebalance - lp optimizer", () => {
     const blocked = rebalance(portfolio, targets, {
       contributions,
       allowSelling: true,
-      optimizer: "lp",
       minTradeCents: 5000000,
     });
     expect(blocked.trades).toEqual([]);
     expect(blocked.warnings).toHaveLength(1);
     expect(blocked.warnings[0]).toContain("US Bonds");
-  });
-
-  it("rejects an unknown optimizer", () => {
-    const { portfolio, targets } = loadExample();
-    expect(() =>
-      rebalance(portfolio, targets, { contributions: [], optimizer: "quantum" as never }),
-    ).toThrow(/optimizer/);
   });
 });
 
@@ -271,7 +216,7 @@ describe("rebalance - restricted fund menus (residual scenarios)", () => {
     return { portfolio, targets };
   }
 
-  it("the default engine reaches target exactly when a solution exists", () => {
+  it("reaches target exactly when a solution exists", () => {
     const { portfolio, targets } = restrictedMenuHousehold();
     const result = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
 
@@ -279,8 +224,8 @@ describe("rebalance - restricted fund menus (residual scenarios)", () => {
     for (const deviation of result.deviationFromTarget) {
       expect(deviation.deviationBps).toBe(0);
     }
-    // The signature move greedy cannot express: bonds sold in the IRA (a
-    // globally *underweight* class) while the 401(k) buys them back.
+    // The signature relocation move: bonds sold in the IRA (a globally
+    // *underweight* class) while the 401(k) buys them back.
     const iraBondSell = result.trades.find((t) => t.accountId === "ira" && t.fundId === "bnd");
     expect(iraBondSell).toEqual({
       accountId: "ira",
@@ -291,18 +236,6 @@ describe("rebalance - restricted fund menus (residual scenarios)", () => {
     });
   });
 
-  it("documents the greedy engine's known residual on the same household", () => {
-    const { portfolio, targets } = restrictedMenuHousehold();
-    const result = rebalance(portfolio, targets, { contributions: [], allowSelling: true, optimizer: "greedy" });
-
-    // Greedy only sells globally-overweight classes, so it cannot relocate
-    // bonds between accounts and strands $1,000 of the international gap.
-    // If greedy ever learns this move, update this test (and celebrate).
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain("International Stocks");
-    const intl = result.resultingAllocation.find((a) => a.assetClassId === "intl_stocks")!;
-    expect(intl.value).toBe(intl.targetValue - 100000);
-  });
 });
 
 describe("rebalance - blended funds", () => {
@@ -427,18 +360,6 @@ describe("rebalance - blended funds", () => {
     expect(result.trades).toEqual([]);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("US Bonds");
-  });
-
-  it("the greedy engine rejects blended funds with a pointer to lp", () => {
-    const portfolio = blendHousehold();
-    const targets: Target[] = [
-      { assetClassId: "us_stocks", weight: 6500 },
-      { assetClassId: "intl_stocks", weight: 3500 },
-      { assetClassId: "us_bonds", weight: 0 },
-    ];
-    expect(() => rebalance(portfolio, targets, { contributions: [], optimizer: "greedy" })).toThrow(
-      /greedy.*single-asset-class.*"vt".*lp/s,
-    );
   });
 
   it("rejects fund weights that do not sum to 10000 bps", () => {
@@ -604,23 +525,7 @@ describe("rebalance - tolerance band and minTradeCents", () => {
     expect(allowed.warnings).toEqual([]);
   });
 
-  it("buy-only: greedy sends cash past sub-band gaps to the fallback fund, with a warning", () => {
-    const { portfolio, targets } = driftedPortfolio(5001, 4999);
-    const result = rebalance(portfolio, targets, {
-      contributions: [{ accountId: "ira", amount: 10 }],
-      optimizer: "greedy",
-    });
-
-    // The 6-cent bond gap is inside the band, so the 10 cents of cash is
-    // invested in the account's most-preferred fund instead.
-    expect(
-      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
-    ).toEqual([{ accountId: "ira", fundId: "vti", action: "buy", amount: 10 }]);
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain("left after closing every reachable gap");
-  });
-
-  it("buy-only: the lp engine invests sub-band cash fully, without a leftover warning", () => {
+  it("buy-only: sub-band cash is still fully invested, without a warning", () => {
     const { portfolio, targets } = driftedPortfolio(5001, 4999);
     const result = rebalance(portfolio, targets, { contributions: [{ accountId: "ira", amount: 10 }] });
 

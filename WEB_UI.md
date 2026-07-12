@@ -67,10 +67,10 @@ Selling is **on by default** in the UI, taxable accounts included (the
 solver itself stays buy-only by default); the always-visible "Allow
 selling in taxable accounts" checkbox at the top starts checked — uncheck
 it to rebalance only tax-advantaged accounts by selling. The rarer knobs —
-allow selling at all, tolerance band, minimum sell-funded trade,
-optimizer — live behind the ⚙ Settings button; whenever any of them is
-non-default, a summary note appears next to the Trades heading so
-tucked-away settings can never invisibly shape the results.
+allow selling at all, tolerance band, minimum sell-funded trade — live
+behind the ⚙ Settings button; whenever any of them is non-default, a
+summary note appears next to the Trades heading so tucked-away settings
+can never invisibly shape the results.
 
 **Download JSON / Load JSON…** in the header save and restore the complete
 scenario. The file is the solver's canonical `Scenario` document — exactly
