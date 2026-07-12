@@ -71,17 +71,25 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
             </p>
           </div>
           <div className="header-actions">
-            <button type="button" onClick={() => downloadScenario(scenario)}>
-              Download JSON
+            <button
+              type="button"
+              title="Download your whole setup as a file you can open again later"
+              onClick={() => downloadScenario(scenario)}
+            >
+              Save file
             </button>
-            <button type="button" onClick={() => fileInput.current?.click()}>
-              Load JSON…
+            <button
+              type="button"
+              title="Open a previously saved file"
+              onClick={() => fileInput.current?.click()}
+            >
+              Open file…
             </button>
             <input
               ref={fileInput}
               type="file"
               accept=".json,application/json"
-              aria-label="Load scenario JSON file"
+              aria-label="Open scenario file"
               className="visually-hidden"
               onChange={(event) => {
                 void onFileChosen(event.target.files?.[0]);
@@ -148,8 +156,8 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
               The funds above are a pre-loaded starting point — rename, remove, or replace them freely;
               they're placeholders, not recommendations. Set each asset class's target percentage, then
               add your accounts with their current balances. The trades that move your portfolio toward
-              your targets will appear here — or load a previously downloaded scenario file with{" "}
-              <strong>Load JSON…</strong>
+              your targets will appear here — or open a previously saved file with{" "}
+              <strong>Open file…</strong>
             </p>
           </div>
         ) : outcome.result ? (
@@ -177,7 +185,7 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
         </p>
         <p>
           Your data stays in your browser and is never transmitted or stored by this site. Reloading
-          clears the page — use <strong>Download JSON</strong> to keep a scenario.
+          clears the page — use <strong>Save file</strong> to keep your work.
         </p>
       </footer>
     </div>

@@ -20,7 +20,7 @@ catalog of common index funds and their asset classes
 could read as a suggested portfolio, and the compliance posture is that
 every dollar amount and percentage on screen was stated by the user. A
 getting-started card points the way; to see a fully populated run, load
-any fixture from `packages/solver/fixtures/` via **Load JSON…** (the UI
+any fixture from `packages/solver/fixtures/` via **Open file…** (the UI
 tests drive a populated household through App's `initialScenario`
 prop).
 
@@ -124,7 +124,7 @@ it visible on every layout change — presenting impersonal calculation
 (rather than security recommendations) is a legal posture, not just
 copy.
 
-**Download JSON / Load JSON…** in the header save and restore the complete
+**Save file / Open file…** in the header save and restore the complete
 scenario. The file is the solver's canonical `Scenario` document — exactly
 what the CLI reads — so a downloaded file works directly with
 `pnpm solve -p <file>`, and any fixture in `packages/solver/fixtures/`
