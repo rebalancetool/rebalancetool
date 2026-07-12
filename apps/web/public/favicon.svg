@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90" viewBox="0 0 90 90" role="img" aria-label="rebalancetool">
+<g transform="translate(0,0)">
+<rect x="0" y="0" width="90" height="90" rx="18.00" fill="#0f766e"/>
+<line x1="20.0" y1="30.0" x2="70.0" y2="30.0" stroke="#5eead4" stroke-width="2.00" stroke-dasharray="3.00 3.00"/>
+<rect x="22.0" y="30.0" width="12.0" height="40.0" rx="2.00" fill="#ffffff"/>
+<rect x="39.0" y="46.0" width="12.0" height="24.0" rx="2.00" fill="#99f6e4"/>
+<rect x="56.0" y="38.0" width="12.0" height="32.0" rx="2.00" fill="#99f6e4"/>
+<path d="M45.0 42.0 l0 -7.0 M42.0 38.0 l3.0 -3.0 l3.0 3.0" fill="none" stroke="#ffffff" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M62.0 34.0 l0 -7.0 M59.0 30.0 l3.0 -3.0 l3.0 3.0" fill="none" stroke="#ffffff" stroke-width="2.00" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</svg>

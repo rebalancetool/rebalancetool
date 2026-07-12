@@ -12,6 +12,7 @@ pnpm run test                   # vitest run in every package (single run)
 pnpm --filter @rebalancer/solver test -- rebalance   # run a single test file/pattern
 pnpm run test:watch             # vitest in watch mode, solver package only
 pnpm run build                  # compile every package to dist/
+pnpm icons                      # regenerate raster icons in apps/web/public from their SVGs (sharp)
 pnpm solve -p <scenario.json> [--sell] [--sell-taxable] [-c accountId:amountCents ...]   # run the CLI
 ```
 

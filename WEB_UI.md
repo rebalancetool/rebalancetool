@@ -39,6 +39,15 @@ pnpm run typecheck
 pnpm --filter @rebalancer/web run test:watch
 ```
 
+## Icons & wordmark
+
+The favicon, touch icon, and header wordmark are hand-drawn SVGs in
+`apps/web/public/`. Raster fallbacks (`favicon.ico`, `icon-192.png`,
+`icon-512.png`, `apple-touch-icon.png`) are generated from them with
+`pnpm icons` (sharp, entirely local) and committed — regenerate and
+re-commit after editing an SVG. `site.webmanifest` and the `<link>`
+tags live in `index.html`.
+
 ## Deploying
 
 The app is a fully static Vite build — no backend, no environment

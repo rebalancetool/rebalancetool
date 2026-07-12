@@ -112,6 +112,12 @@ body {
   letter-spacing: -0.01em;
 }
 
+.wordmark {
+  display: block;
+  height: 28px;
+  width: auto;
+}
+
 .app-header .tagline {
   margin: 4px 0 0;
   color: var(--text-muted);

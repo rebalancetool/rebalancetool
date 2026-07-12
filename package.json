@@ -15,7 +15,8 @@
     "test": "pnpm -r run test",
     "test:watch": "pnpm --filter @rebalancer/solver run test:watch",
     "build": "pnpm -r run build",
-    "solve": "tsx apps/cli/src/index.ts"
+    "solve": "tsx apps/cli/src/index.ts",
+    "icons": "pnpm --filter @rebalancer/web run icons"
   },
   "devDependencies": {
     "tsx": "^4.19.2"
