@@ -619,6 +619,30 @@ describe("rebalance - core invariants", () => {
     );
   });
 
+  it("rejects two funds sharing a ticker (case-insensitively); ticker-less funds never collide", () => {
+    const portfolio: Portfolio = {
+      assetClasses: [{ id: "stocks", name: "Stocks" }],
+      funds: [
+        { id: "vti", ticker: "VTI", name: "Vanguard Total Stock Market ETF", assetClasses: { stocks: 10000 } },
+        { id: "vti-2", ticker: "vti", name: "Accidental duplicate", assetClasses: { stocks: 10000 } },
+      ],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["vti"] }],
+      holdings: [],
+    };
+    const targets: Target[] = [{ assetClassId: "stocks", weight: 10000 }];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(
+      /"vti" and "vti-2" both have ticker "VTI"/,
+    );
+
+    // Funds without tickers (e.g. named 401(k) menu entries) are fine.
+    portfolio.funds = [
+      { id: "fund_a", name: "Employer Fund A", assetClasses: { stocks: 10000 } },
+      { id: "fund_b", name: "Employer Fund B", assetClasses: { stocks: 10000 } },
+    ];
+    portfolio.accounts[0]!.availableFundIds = ["fund_a"];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).not.toThrow();
+  });
+
   it("rejects targets that do not sum to 10000 bps", () => {
     const { portfolio } = loadExample();
     const badTargets: Target[] = [{ assetClassId: "us_stocks", weight: 9000 }];

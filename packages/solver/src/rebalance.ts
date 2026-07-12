@@ -377,6 +377,20 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   if (fundIds.size !== portfolio.funds.length) throw new Error("Duplicate Fund id.");
   if (accountIds.size !== portfolio.accounts.length) throw new Error("Duplicate Account id.");
 
+  // Tickers identify funds to the user (trades are displayed by ticker), so
+  // two funds sharing one would make the output ambiguous. Case-insensitive;
+  // ticker-less funds (e.g. named 401(k) menu entries) never collide.
+  const fundIdByTicker = new Map<string, string>();
+  for (const fund of portfolio.funds) {
+    const ticker = fund.ticker?.trim().toUpperCase();
+    if (!ticker) continue;
+    const other = fundIdByTicker.get(ticker);
+    if (other !== undefined) {
+      throw new Error(`Funds "${other}" and "${fund.id}" both have ticker "${ticker}" — tickers must be unique.`);
+    }
+    fundIdByTicker.set(ticker, fund.id);
+  }
+
   for (const fund of portfolio.funds) {
     const entries = Object.entries(fund.assetClasses);
     if (entries.length === 0) {

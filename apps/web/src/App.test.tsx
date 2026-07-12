@@ -178,6 +178,24 @@ test("a new fund can be added as a blend straight from the add row", async () =>
   expect(screen.getByLabelText("Add asset class to AOA")).toBeInTheDocument();
 });
 
+test("adding a second fund with an existing ticker surfaces the solver's error until it's removed", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.type(screen.getByLabelText("New fund ticker"), "vti");
+  await user.click(screen.getByRole("button", { name: "Add fund" }));
+
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent("Can’t rebalance yet");
+  expect(alert).toHaveTextContent('both have ticker "VTI"');
+
+  // Both rows are labeled VTI; the duplicate is the later one. Removing it
+  // brings the results back.
+  await user.click(screen.getAllByLabelText("Remove fund VTI")[1]!);
+  expect(screen.queryByText("Can’t rebalance yet")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Trades" })).toBeInTheDocument();
+});
+
 test("a single-class fund becomes a blend through the 'Blend of classes…' picker", async () => {
   const user = userEvent.setup();
   render(<App />);
