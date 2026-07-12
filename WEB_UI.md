@@ -13,10 +13,16 @@ pnpm install     # once, at the repo root (Node 24 — run `fnm use` first)
 pnpm dev         # start the Vite dev server
 ```
 
-Then open **http://localhost:5173**. The page loads with the built-in
-example household (the same placeholder data as
-`packages/solver/fixtures/example.json`) so there is something to look at
-immediately; use **Start empty** to build from scratch.
+Then open **http://localhost:5173**. The page starts with a small
+catalog of common index funds and their asset classes
+(`starter-scenario.ts`) — an editable convenience, deliberately with
+**no accounts, holdings, or target percentages**: pre-filling those
+could read as a suggested portfolio, and the compliance posture is that
+every dollar amount and percentage on screen was stated by the user. A
+getting-started card points the way; to see a fully populated run, load
+any fixture from `packages/solver/fixtures/` via **Load JSON…** (the UI
+tests drive a populated household through App's `initialScenario`
+prop).
 
 To test a production build instead of the dev server:
 

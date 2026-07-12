@@ -1,15 +1,13 @@
 import type { Scenario } from "@rebalancer/solver";
 
 /**
- * The starting scenario shown on first load — a copy of the solver's
- * placeholder fixture (packages/solver/fixtures/example.json): an invented
- * household with a taxable brokerage, two IRAs, a 401(k), and an HSA. Not
- * real account data. Kept as a typed const because the fixture file is not
- * part of the solver's public exports. Two deliberate differences from the
- * fixture: the web UI turns selling on by default, taxable accounts
- * included (the checkbox at the top of the page turns taxable sells off);
- * and the HSA holds VT — a 65/35 US/international blend — so the fund
- * blend editor has something to show out of the box.
+ * Test fixture: the invented household the UI tests drive — a taxable
+ * brokerage, two IRAs, a 401(k), and an HSA holding VT (a 65/35 blend, so
+ * the blend editor is exercised), with selling enabled. Mirrors
+ * packages/solver/fixtures/example.json. Deliberately NOT imported by the
+ * app: the shipped UI starts with only the fund catalog in
+ * starter-scenario.ts — never accounts, holdings, or targets — so it never
+ * appears to suggest a portfolio (see the compliance footer).
  */
 export const demoScenario: Scenario = {
   portfolio: {

@@ -1,11 +1,11 @@
 import { rebalance } from "@rebalancer/solver";
 import type { RebalanceResult, Scenario } from "@rebalancer/solver";
 import { useMemo, useRef, useState } from "react";
-import { demoScenario } from "./demo-scenario.ts";
 import { PortfolioEditor } from "./PortfolioEditor.tsx";
 import { ResultView } from "./ResultView.tsx";
 import { emptyScenario, withOptions } from "./scenario-edit.ts";
 import { scenarioFromJson, scenarioToJson } from "./scenario-file.ts";
+import { starterScenario } from "./starter-scenario.ts";
 import { OptionsEditor } from "./ScenarioEditor.tsx";
 
 type Outcome = { result: RebalanceResult; error?: undefined } | { result?: undefined; error: string };
@@ -34,8 +34,15 @@ function downloadScenario(scenario: Scenario): void {
   URL.revokeObjectURL(url);
 }
 
-export function App() {
-  const [scenario, setScenario] = useState<Scenario>(demoScenario);
+/**
+ * `initialScenario` exists for tests (which drive a populated portfolio);
+ * the shipped app starts with only the starter fund catalog — no accounts,
+ * holdings, or targets. Pre-filling those could read as a suggested
+ * portfolio; the compliance posture is that every number on screen was
+ * stated by the user.
+ */
+export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
+  const [scenario, setScenario] = useState<Scenario>(initialScenario ?? starterScenario());
   const [fileError, setFileError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -59,8 +66,8 @@ export function App() {
           <div>
             <h1>Asset Allocation Rebalance Calculator</h1>
             <p className="tagline">
-              Multi-account portfolio rebalancing. Everything runs in this page —
-              nothing is uploaded, and reloading clears it.
+              See the exact trades that rebalance your whole portfolio toward your targets —
+              every account at once, tax-aware, right in your browser.
             </p>
           </div>
           <div className="header-actions">
@@ -81,11 +88,8 @@ export function App() {
                 event.target.value = ""; // so picking the same file again re-fires
               }}
             />
-            <button type="button" onClick={() => setScenario(demoScenario)}>
-              Load example
-            </button>
             <button type="button" onClick={() => setScenario(emptyScenario())}>
-              Start empty
+              Clear all
             </button>
             <div className="settings-anchor">
               <button
@@ -135,7 +139,20 @@ export function App() {
 
         <PortfolioEditor scenario={scenario} onChange={setScenario} />
 
-        {outcome.result ? (
+        {scenario.portfolio.accounts.length === 0 ? (
+          // Until an account exists nothing can be computed: show guidance,
+          // not the solver's error.
+          <div className="card get-started">
+            <h3>Start with your portfolio</h3>
+            <p>
+              The funds above are a pre-loaded starting point — rename, remove, or replace them freely;
+              they're placeholders, not recommendations. Set each asset class's target percentage, then
+              add your accounts with their current balances. The trades that move your portfolio toward
+              your targets will appear here — or load a previously downloaded scenario file with{" "}
+              <strong>Load JSON…</strong>
+            </p>
+          </div>
+        ) : outcome.result ? (
           <ResultView scenario={scenario} result={outcome.result} />
         ) : (
           <div className="card solve-error" role="alert">
@@ -153,12 +170,15 @@ export function App() {
           <strong>This is a calculator, not investment advice.</strong> This tool performs arithmetic on
           information you provide. You choose the asset classes, the target allocation, the funds, and which
           accounts may hold them; the tool computes trades that move your stated holdings toward your stated
-          targets. It does not recommend any security, allocation, or strategy, and the example data shown
-          before you enter your own is illustrative only — not a suggested portfolio. Nothing here is
+          targets. It does not recommend any security, allocation, or strategy — the funds pre-loaded on
+          first visit are editable placeholders for convenience, not recommendations. Nothing here is
           investment, tax, or legal advice. Consult a qualified professional before making investment
           decisions.
         </p>
-        <p>Your data stays in your browser and is never transmitted or stored by this site.</p>
+        <p>
+          Your data stays in your browser and is never transmitted or stored by this site. Reloading
+          clears the page — use <strong>Download JSON</strong> to keep a scenario.
+        </p>
       </footer>
     </div>
   );
