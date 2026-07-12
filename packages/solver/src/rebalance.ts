@@ -103,6 +103,12 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   }
 
   const newTotal = currentPortfolioTotal + totalContribution;
+  if (newTotal > MAX_PORTFOLIO_CENTS) {
+    throw new Error(
+      `Portfolio total (holdings + contributions) is ${newTotal} cents, above the supported maximum of ` +
+        `${MAX_PORTFOLIO_CENTS} (about $9 billion).`,
+    );
+  }
 
   // --- Step 2: target dollars per asset class ---
   const demands = proportionalAllocate(
@@ -149,6 +155,34 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       .map(([classId, weight]) => `${formatBpsAsPercent(weight)} ${assetClassesById.get(classId)!.name}`)
       .join(", ");
 
+  // Pre-trade class totals in integer cents (a blend's value split across
+  // its components by largest remainder). Reasons are phrased against
+  // these, so a trade never claims a class is below target when the table
+  // next to it says otherwise; reused later for the allocation report.
+  const currentTotals = new Map<string, number>();
+  const resultingTotals = new Map<string, number>();
+  for (const assetClass of portfolio.assetClasses) {
+    currentTotals.set(assetClass.id, 0);
+    resultingTotals.set(assetClass.id, 0);
+  }
+  const addSplit = (totals: Map<string, number>, fundId: string, value: number): void => {
+    const weights = weightsByFund.get(fundId)!;
+    const shares = proportionalAllocate(
+      value,
+      [...weights.entries()].map(([key, weight]) => ({ key, weight })),
+    );
+    for (const [classId, share] of shares) {
+      totals.set(classId, (totals.get(classId) ?? 0) + share);
+    }
+  };
+  for (const account of portfolio.accounts) {
+    for (const [fundId, value] of heldFundValues.get(account.id)!) addSplit(currentTotals, fundId, value);
+  }
+  const belowTarget = (classId: string): boolean =>
+    (currentTotals.get(classId) ?? 0) < (demands.get(classId) ?? 0);
+  const aboveTarget = (classId: string): boolean =>
+    (currentTotals.get(classId) ?? 0) > (demands.get(classId) ?? 0);
+
   const trades: Trade[] = [];
   const accountsByIdOrder = [...portfolio.accounts].sort((a, b) => a.id.localeCompare(b.id));
   for (const account of accountsByIdOrder) {
@@ -162,31 +196,43 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       const label = fund.ticker ?? fund.name;
       const soleClassId = weights.size === 1 ? weights.keys().next().value! : undefined;
       if (delta > 0) {
-        trades.push({
-          accountId: account.id,
-          fundId,
-          action: "buy",
-          amount: delta,
-          reason:
-            soleClassId !== undefined
-              ? `${assetClassesById.get(soleClassId)!.name} is below target; buying ${formatDollars(delta)} of ` +
-                `${label} in ${account.name}.`
-              : `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
-                `to close underweight asset classes.`,
-        });
+        // "Below target" is only claimed when it's true: a buy whose fund
+        // offers no under-target exposure is surplus-cash placement (cash
+        // may not sit idle, so it lands per the documented tie-breaks).
+        const fillsGap = soleClassId !== undefined ? belowTarget(soleClassId) : [...weights.keys()].some(belowTarget);
+        let reason: string;
+        if (soleClassId !== undefined) {
+          const className = assetClassesById.get(soleClassId)!.name;
+          reason = fillsGap
+            ? `${className} is below target; buying ${formatDollars(delta)} of ${label} in ${account.name}.`
+            : `${className} is at or above target; investing ${formatDollars(delta)} of surplus contribution ` +
+              `cash in ${label} in ${account.name}.`;
+        } else {
+          reason = fillsGap
+            ? `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+              `to close underweight asset classes.`
+            : `Investing ${formatDollars(delta)} of surplus contribution cash in ${label} ` +
+              `(${describeBlend(weights)}) in ${account.name}; none of its classes is below target.`;
+        }
+        trades.push({ accountId: account.id, fundId, action: "buy", amount: delta, reason });
       } else {
-        trades.push({
-          accountId: account.id,
-          fundId,
-          action: "sell",
-          amount: -delta,
-          reason:
-            soleClassId !== undefined
-              ? `${assetClassesById.get(soleClassId)!.name} is above target; selling ${formatDollars(-delta)} of ` +
-                `${label} in ${account.name} to fund underweight asset classes.`
-              : `Selling ${formatDollars(-delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
-                `to fund underweight asset classes.`,
-        });
+        // A single-class sell of a class that isn't above target can only be
+        // a relocation: the class floor forbids shrinking its total, so the
+        // dollars are repurchased in another account.
+        let reason: string;
+        if (soleClassId !== undefined) {
+          const className = assetClassesById.get(soleClassId)!.name;
+          reason = aboveTarget(soleClassId)
+            ? `${className} is above target; selling ${formatDollars(-delta)} of ${label} in ${account.name} ` +
+              `to fund underweight asset classes.`
+            : `Selling ${formatDollars(-delta)} of ${label} in ${account.name} to relocate ${className} to ` +
+              `another account, freeing this one for underweight classes.`;
+        } else {
+          reason =
+            `Selling ${formatDollars(-delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+            `to fund underweight asset classes.`;
+        }
+        trades.push({ accountId: account.id, fundId, action: "sell", amount: -delta, reason });
       }
     }
   }
@@ -255,27 +301,10 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   });
 
   // --- resulting allocation & deviation, post-trade ---
-  // A blended fund's dollars are split across its component classes by
-  // largest-remainder on the weights, so class totals stay integer cents and
-  // every fund's value is conserved exactly across its components.
-  const currentTotals = new Map<string, number>();
-  const resultingTotals = new Map<string, number>();
-  for (const assetClass of portfolio.assetClasses) {
-    currentTotals.set(assetClass.id, 0);
-    resultingTotals.set(assetClass.id, 0);
-  }
-  const addSplit = (totals: Map<string, number>, fundId: string, value: number): void => {
-    const weights = weightsByFund.get(fundId)!;
-    const shares = proportionalAllocate(
-      value,
-      [...weights.entries()].map(([key, weight]) => ({ key, weight })),
-    );
-    for (const [classId, share] of shares) {
-      totals.set(classId, (totals.get(classId) ?? 0) + share);
-    }
-  };
+  // Same largest-remainder splitting as the pre-trade totals above, so class
+  // totals stay integer cents and every fund's value is conserved exactly
+  // across its components.
   for (const account of portfolio.accounts) {
-    for (const [fundId, value] of heldFundValues.get(account.id)!) addSplit(currentTotals, fundId, value);
     for (const [fundId, value] of allocation.x.get(account.id)!) addSplit(resultingTotals, fundId, value);
   }
 
@@ -302,6 +331,16 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   return { trades, accounts, resultingAllocation, deviationFromTarget, warnings };
 }
+
+/**
+ * Largest supported post-contribution portfolio total, in integer cents
+ * (~$9.007 billion). The exact class-exposure math multiplies cents by
+ * basis points, and staying under this bound keeps every such product —
+ * and their portfolio-wide sums — inside Number.MAX_SAFE_INTEGER; it also
+ * keeps LP float error far below the solver's epsilons. Enforced up front
+ * so exceeding it is a clear message instead of a numeric cliff.
+ */
+const MAX_PORTFOLIO_CENTS = Math.floor(Number.MAX_SAFE_INTEGER / TOTAL_BPS);
 
 /**
  * Distributes `totalToDistribute` (an integer) across `weights` in
@@ -393,6 +432,16 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   if (fundIds.size !== portfolio.funds.length) throw new Error("Duplicate Fund id.");
   if (accountIds.size !== portfolio.accounts.length) throw new Error("Duplicate Account id.");
 
+  for (const [kind, ids] of [
+    ["AssetClass", assetClassIds],
+    ["Fund", fundIds],
+    ["Account", accountIds],
+  ] as const) {
+    for (const id of ids) {
+      if (id.trim() === "") throw new Error(`${kind} ids must be non-empty, got ${JSON.stringify(id)}.`);
+    }
+  }
+
   // Tickers identify funds to the user (trades are displayed by ticker), so
   // two funds sharing one would make the output ambiguous. Case-insensitive;
   // ticker-less funds (e.g. named 401(k) menu entries) never collide.
@@ -414,6 +463,13 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   // by ticker, checked above.) Case-insensitive; blank names never collide.
   requireUniqueNames("Asset classes", portfolio.assetClasses);
   requireUniqueNames("Accounts", portfolio.accounts);
+  // A ticker-less fund is displayed by name, so *among ticker-less funds*
+  // names must be unique too. Funds with tickers may freely share a name —
+  // share classes do (VTI and VTSAX are both "Vanguard Total Stock Market").
+  requireUniqueNames(
+    "Ticker-less funds",
+    portfolio.funds.filter((f) => !f.ticker?.trim()),
+  );
 
   for (const fund of portfolio.funds) {
     const entries = Object.entries(fund.assetClasses);
@@ -441,10 +497,15 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
   }
 
   for (const account of portfolio.accounts) {
+    const seen = new Set<string>();
     for (const fundId of account.availableFundIds) {
       if (!fundIds.has(fundId)) {
         throw new Error(`Account "${account.id}" availableFundIds references unknown fund "${fundId}".`);
       }
+      if (seen.has(fundId)) {
+        throw new Error(`Account "${account.id}" lists fund "${fundId}" more than once in availableFundIds.`);
+      }
+      seen.add(fundId);
     }
   }
 

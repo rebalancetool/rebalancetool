@@ -225,14 +225,15 @@ describe("rebalance - restricted fund menus (residual scenarios)", () => {
       expect(deviation.deviationBps).toBe(0);
     }
     // The signature relocation move: bonds sold in the IRA (a globally
-    // *underweight* class) while the 401(k) buys them back.
+    // *underweight* class) while the 401(k) buys them back — and the reason
+    // says that's what's happening instead of claiming bonds are overweight.
     const iraBondSell = result.trades.find((t) => t.accountId === "ira" && t.fundId === "bnd");
     expect(iraBondSell).toEqual({
       accountId: "ira",
       fundId: "bnd",
       action: "sell",
       amount: 100000,
-      reason: expect.stringContaining("US Bonds"),
+      reason: expect.stringContaining("relocate US Bonds"),
     });
   });
 
@@ -542,6 +543,56 @@ describe("rebalance - tolerance band and minTradeCents", () => {
   });
 });
 
+describe("rebalance - trade reasons tell the truth", () => {
+  it("surplus-cash buys say so instead of claiming the class is below target", () => {
+    // The IRA's $100 contribution can't reach the international gap (only
+    // the brokerage offers VXUS), so it must be parked in an on-target
+    // class — bonds, via the documented tax-preference tie-break. The
+    // reason must describe surplus placement, not invent a bond gap the
+    // allocation table right next to it would contradict.
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "stocks", name: "Stocks" },
+        { id: "bonds", name: "Bonds", taxPreference: "prefer_tax_advantaged" },
+        { id: "intl", name: "International" },
+      ],
+      funds: [
+        { id: "vti", ticker: "VTI", name: "Total Stock", assetClasses: { stocks: 10000 } },
+        { id: "bnd", ticker: "BND", name: "Total Bond", assetClasses: { bonds: 10000 } },
+        { id: "vxus", ticker: "VXUS", name: "Total Intl", assetClasses: { intl: 10000 } },
+      ],
+      accounts: [
+        { id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vti", "bnd"] },
+        { id: "taxable", name: "Brokerage", taxType: "taxable", availableFundIds: ["vxus"] },
+      ],
+      holdings: [
+        { accountId: "ira", fundId: "vti", value: 400000 },
+        { accountId: "ira", fundId: "bnd", value: 300000 },
+        { accountId: "taxable", fundId: "vxus", value: 290000 },
+      ],
+    };
+    const targets: Target[] = [
+      { assetClassId: "stocks", weight: 4000 },
+      { assetClassId: "bonds", weight: 3000 },
+      { assetClassId: "intl", weight: 3000 },
+    ];
+    const result = rebalance(portfolio, targets, {
+      contributions: [{ accountId: "ira", amount: 10000 }],
+      toleranceBps: 0,
+    });
+
+    expect(result.trades).toEqual([
+      {
+        accountId: "ira",
+        fundId: "bnd",
+        action: "buy",
+        amount: 10000,
+        reason: "Bonds is at or above target; investing $100.00 of surplus contribution cash in BND in IRA.",
+      },
+    ]);
+  });
+});
+
 describe("rebalance - core invariants", () => {
   it("returns zero trades when every contribution is zero", () => {
     const { portfolio, targets } = loadExample();
@@ -641,6 +692,115 @@ describe("rebalance - core invariants", () => {
     ];
     portfolio.accounts[0]!.availableFundIds = ["fund_a"];
     expect(() => rebalance(portfolio, targets, { contributions: [] })).not.toThrow();
+  });
+
+  it("handles ids containing spaces (LP model keys must not alias)", () => {
+    // account "a" + fund "b f" must never collide with account "a b" +
+    // fund "f" inside the LP model. Before cellKey, this trivially feasible
+    // portfolio crashed with 'LP allocation failed at stage "dev": infeasible'.
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "stocks", name: "Stocks" },
+        { id: "bonds", name: "Bonds" },
+      ],
+      funds: [
+        { id: "b f", name: "Fund b f", assetClasses: { stocks: 10000 } },
+        { id: "f", name: "Fund f", assetClasses: { bonds: 10000 } },
+      ],
+      accounts: [
+        { id: "a", name: "Account A", taxType: "tax_free", availableFundIds: ["b f"] },
+        { id: "a b", name: "Account AB", taxType: "tax_free", availableFundIds: ["f"] },
+      ],
+      holdings: [
+        { accountId: "a", fundId: "b f", value: 100000 },
+        { accountId: "a b", fundId: "f", value: 100000 },
+      ],
+    };
+    const targets: Target[] = [
+      { assetClassId: "stocks", weight: 5000 },
+      { assetClassId: "bonds", weight: 5000 },
+    ];
+    const result = rebalance(portfolio, targets, {
+      contributions: [
+        { accountId: "a", amount: 50000 },
+        { accountId: "a b", amount: 50000 },
+      ],
+    });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "a", fundId: "b f", action: "buy", amount: 50000 },
+      { accountId: "a b", fundId: "f", action: "buy", amount: 50000 },
+    ]);
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+  });
+
+  it("rejects empty or whitespace-only ids", () => {
+    const portfolio: Portfolio = {
+      assetClasses: [{ id: "stocks", name: "Stocks" }],
+      funds: [{ id: " ", name: "VTI", assetClasses: { stocks: 10000 } }],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: [" "] }],
+      holdings: [],
+    };
+    const targets: Target[] = [{ assetClassId: "stocks", weight: 10000 }];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(/Fund ids must be non-empty/);
+  });
+
+  it("rejects duplicate names among ticker-less funds and duplicate availableFundIds entries", () => {
+    const portfolio: Portfolio = {
+      assetClasses: [{ id: "stocks", name: "Stocks" }],
+      funds: [
+        { id: "fund_a", name: "Employer Stock Fund", assetClasses: { stocks: 10000 } },
+        { id: "fund_b", name: "Employer Stock Fund", assetClasses: { stocks: 10000 } },
+      ],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["fund_a"] }],
+      holdings: [],
+    };
+    const targets: Target[] = [{ assetClassId: "stocks", weight: 10000 }];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(
+      /Ticker-less funds "fund_a" and "fund_b" are both named "Employer Stock Fund"/,
+    );
+
+    // The same shared name is fine once tickers disambiguate the funds.
+    portfolio.funds[0]!.ticker = "VTI";
+    portfolio.funds[1]!.ticker = "VTSAX";
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).not.toThrow();
+
+    portfolio.accounts[0]!.availableFundIds = ["fund_a", "fund_b", "fund_a"];
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(
+      /Account "acct" lists fund "fund_a" more than once/,
+    );
+  });
+
+  it("caps the portfolio total at ~$9B with a clear error, and solves cleanly right at the cap", () => {
+    // The cap keeps every cents × basis-points product (and their sums)
+    // inside Number.MAX_SAFE_INTEGER. Exercised with a blend so the
+    // float-heavy class-exposure path runs at the boundary.
+    const maxPortfolioCents = Math.floor(Number.MAX_SAFE_INTEGER / 10000);
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "us", name: "US" },
+        { id: "intl", name: "Intl" },
+      ],
+      funds: [{ id: "vt", ticker: "VT", name: "VT", assetClasses: { us: 5000, intl: 5000 } }],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["vt"] }],
+      holdings: [{ accountId: "acct", fundId: "vt", value: maxPortfolioCents }],
+    };
+    const targets: Target[] = [
+      { assetClassId: "us", weight: 5000 },
+      { assetClassId: "intl", weight: 5000 },
+    ];
+
+    const atCap = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
+    expect(atCap.trades).toEqual([]);
+    expect(atCap.warnings).toEqual([]);
+
+    expect(() =>
+      rebalance(portfolio, targets, { contributions: [{ accountId: "acct", amount: 1 }] }),
+    ).toThrow(/above the supported maximum/);
   });
 
   it("rejects duplicate asset-class and account names, case-insensitively", () => {

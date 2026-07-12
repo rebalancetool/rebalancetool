@@ -57,6 +57,7 @@ const TAX_PREFERENCES: readonly TaxPreference[] = ["prefer_taxable", "prefer_tax
 function parseAssetClass(value: unknown, index: number): AssetClass {
   const path = `portfolio.assetClasses[${index}]`;
   const record = requireRecord(value, path);
+  checkKnownKeys(record, ["id", "name", "taxPreference"], path);
   const assetClass: AssetClass = {
     id: requireString(record.id, `${path}.id`),
     name: requireString(record.name, `${path}.name`),
@@ -76,6 +77,7 @@ function parseFund(value: unknown, index: number): Fund {
         `Use "assetClasses": { "${record.assetClassId}": 10000 } instead (weights are basis points summing to 10000).`,
     );
   }
+  checkKnownKeys(record, ["id", "ticker", "name", "assetClasses"], path);
   const weightsRecord = requireRecord(record.assetClasses, `${path}.assetClasses`);
   const assetClasses: Record<string, number> = {};
   for (const [assetClassId, weight] of Object.entries(weightsRecord)) {
@@ -93,6 +95,7 @@ function parseFund(value: unknown, index: number): Fund {
 function parseAccount(value: unknown, index: number): Account {
   const path = `portfolio.accounts[${index}]`;
   const record = requireRecord(value, path);
+  checkKnownKeys(record, ["id", "name", "taxType", "availableFundIds"], path);
   return {
     id: requireString(record.id, `${path}.id`),
     name: requireString(record.name, `${path}.name`),
@@ -106,6 +109,7 @@ function parseAccount(value: unknown, index: number): Account {
 function parseHolding(value: unknown, index: number): Holding {
   const path = `portfolio.holdings[${index}]`;
   const record = requireRecord(value, path);
+  checkKnownKeys(record, ["accountId", "fundId", "value"], path);
   return {
     accountId: requireString(record.accountId, `${path}.accountId`),
     fundId: requireString(record.fundId, `${path}.fundId`),
@@ -116,6 +120,7 @@ function parseHolding(value: unknown, index: number): Holding {
 function parseTarget(value: unknown, index: number): Target {
   const path = `targets[${index}]`;
   const record = requireRecord(value, path);
+  checkKnownKeys(record, ["assetClassId", "weight"], path);
   return {
     assetClassId: requireString(record.assetClassId, `${path}.assetClassId`),
     weight: requireNumber(record.weight, `${path}.weight`),
@@ -125,6 +130,7 @@ function parseTarget(value: unknown, index: number): Target {
 function parseContribution(value: unknown, index: number): Contribution {
   const path = `contributions[${index}]`;
   const record = requireRecord(value, path);
+  checkKnownKeys(record, ["accountId", "amount"], path);
   return {
     accountId: requireString(record.accountId, `${path}.accountId`),
     amount: requireNumber(record.amount, `${path}.amount`),

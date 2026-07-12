@@ -58,7 +58,11 @@ import { TOTAL_BPS } from "./types.ts";
  * sell is not expressible in a single LP): solve, ban selling any position
  * whose sell came out below the floor, re-solve; repeat until every sell
  * clears the floor or doesn't happen. Terminates in at most one solve per
- * sellable position.
+ * sellable position. Known 1-cent edge: the integer-rounding repair below
+ * can in principle nudge a cent back into a sell that came out exactly at
+ * the floor, leaving it at floor − 1; a randomized search found no
+ * occurrence and the artifact is bounded at one cent, so it is documented
+ * rather than guarded.
  *
  * The simplex works in floats; positions the solver left (near-)untouched
  * are snapped back to exactly their current value — so rounding noise never
@@ -95,12 +99,29 @@ const PIN_EPSILON = 1e-3;
 const PIN_RELATIVE = 1e-9;
 
 /**
+ * Collision-proof (account, fund) pair key for model constraint/variable
+ * names and the banned-sells set. Ids are arbitrary user strings — they may
+ * contain the very space a naive `${a} ${f}` join would use, and account
+ * "a" + fund "b f" must never alias account "a b" + fund "f".
+ */
+const cellKey = (accountId: string, fundId: string): string => JSON.stringify([accountId, fundId]);
+
+/**
  * Subtracted from class-floor constraints. A blend's class exposure is
  * Σ x·(weight/TOTAL_BPS) in floats, which can land a whisper below the
  * exactly-computed integer floor even for the do-nothing solution; the
- * slack is a thousandth of a cent, far too small to admit a real trade.
+ * absolute part is a thousandth of a cent and the relative part tracks how
+ * float error actually grows with position size, so together they stay far
+ * too small to admit a real trade anywhere under rebalance()'s portfolio
+ * cap (at the ~$9B cap the combined slack is still under a cent).
  */
 const FLOOR_EPSILON = 1e-3;
+
+/** Relative component of the class-floor slack (see FLOOR_EPSILON). */
+const FLOOR_RELATIVE = 1e-12;
+
+/** The class floor `value`, slackened for float noise: min ≥ value − (abs + rel·value). */
+const slackenedFloor = (value: number): number => value - (FLOOR_EPSILON + value * FLOOR_RELATIVE);
 
 export function allocateLp(problem: TransportationProblem): Allocation {
   const accounts = [...problem.accounts].sort((a, b) => a.id.localeCompare(b.id));
@@ -120,7 +141,7 @@ export function allocateLp(problem: TransportationProblem): Allocation {
     let bannedThisPass = false;
     for (const account of accounts) {
       for (const fund of funds) {
-        const key = `${account.id} ${fund.id}`;
+        const key = cellKey(account.id, fund.id);
         if (bannedSells.has(key)) continue;
         const sold = held(account.id, fund.id) - (finalValues.get(`x ${key}`) ?? 0);
         if (sold > HALF_CENT && sold < problem.minTradeCents - HALF_CENT) {
@@ -142,13 +163,13 @@ export function allocateLp(problem: TransportationProblem): Allocation {
     for (const fund of funds) target += held(account.id, fund.id);
 
     const cells = funds
-      .filter((fund) => finalValues.has(`x ${account.id} ${fund.id}`) || held(account.id, fund.id) > 0)
+      .filter((fund) => finalValues.has(`x ${cellKey(account.id, fund.id)}`) || held(account.id, fund.id) > 0)
       .map((fund) => {
         const current = held(account.id, fund.id);
-        const raw = Math.max(0, finalValues.get(`x ${account.id} ${fund.id}`) ?? current);
+        const raw = Math.max(0, finalValues.get(`x ${cellKey(account.id, fund.id)}`) ?? current);
         const snapped = Math.abs(raw - current) < HALF_CENT;
         const value = snapped ? current : Math.floor(raw + FLOOR_GUARD);
-        const sellCap = bannedSells.has(`${account.id} ${fund.id}`)
+        const sellCap = bannedSells.has(cellKey(account.id, fund.id))
           ? 0
           : Math.max(0, Math.min(current, problem.sellable(account.id, fund.id)));
         return {
@@ -297,26 +318,26 @@ function solveLexicographic(
         }
       }
       if (!buyable) {
-        constraints.set(`ub ${account.id} ${fund.id}`, { max: current });
-        coefficients.set(`ub ${account.id} ${fund.id}`, 1);
+        constraints.set(`ub ${cellKey(account.id, fund.id)}`, { max: current });
+        coefficients.set(`ub ${cellKey(account.id, fund.id)}`, 1);
       }
-      const sellCap = bannedSells.has(`${account.id} ${fund.id}`)
+      const sellCap = bannedSells.has(cellKey(account.id, fund.id))
         ? 0
         : Math.max(0, Math.min(current, problem.sellable(account.id, fund.id)));
       if (current - sellCap > 0) {
-        constraints.set(`lb ${account.id} ${fund.id}`, { min: current - sellCap });
-        coefficients.set(`lb ${account.id} ${fund.id}`, 1);
+        constraints.set(`lb ${cellKey(account.id, fund.id)}`, { min: current - sellCap });
+        coefficients.set(`lb ${cellKey(account.id, fund.id)}`, 1);
       }
       if (sellCap > 0) {
         // s >= current − x measures dollars sold out of this position.
         hasSells = true;
-        constraints.set(`sold ${account.id} ${fund.id}`, { min: current });
-        coefficients.set(`sold ${account.id} ${fund.id}`, 1);
+        constraints.set(`sold ${cellKey(account.id, fund.id)}`, { min: current });
+        coefficients.set(`sold ${cellKey(account.id, fund.id)}`, 1);
         const slack = new Map<string, number>();
-        slack.set(`sold ${account.id} ${fund.id}`, 1);
+        slack.set(`sold ${cellKey(account.id, fund.id)}`, 1);
         slack.set("sells", 1);
         if (!isTaxAdvantaged(account.taxType)) slack.set("taxsells", 1);
-        variables.set(`s ${account.id} ${fund.id}`, slack);
+        variables.set(`s ${cellKey(account.id, fund.id)}`, slack);
       }
       if (preferredFraction > 0) {
         hasPreferences = true;
@@ -327,7 +348,7 @@ function solveLexicographic(
         hasFundPreferences = true;
         coefficients.set("fundpref", rank);
       }
-      variables.set(`x ${account.id} ${fund.id}`, coefficients);
+      variables.set(`x ${cellKey(account.id, fund.id)}`, coefficients);
     }
   }
 
@@ -341,12 +362,12 @@ function solveLexicographic(
       constraints.set(`devhi ${assetClass.id}`, { max: demand(assetClass.id) });
       constraints.set(`devlo ${assetClass.id}`, { min: demand(assetClass.id) });
       constraints.set(`floor ${assetClass.id}`, {
-        min: Math.min(currentCents, demand(assetClass.id)) - FLOOR_EPSILON,
+        min: slackenedFloor(Math.min(currentCents, demand(assetClass.id))),
       });
       variables.set(`over ${assetClass.id}`, new Map([[`devhi ${assetClass.id}`, -1], ["dev", 1]]));
       variables.set(`under ${assetClass.id}`, new Map([[`devlo ${assetClass.id}`, 1], ["dev", 1]]));
     } else {
-      constraints.set(`floor ${assetClass.id}`, { min: currentCents - FLOOR_EPSILON });
+      constraints.set(`floor ${assetClass.id}`, { min: slackenedFloor(currentCents) });
     }
   }
 

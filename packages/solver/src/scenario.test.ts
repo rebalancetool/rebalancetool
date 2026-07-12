@@ -90,6 +90,64 @@ describe("validateScenario", () => {
     expect(() => validateScenario(badOption)).toThrow(/Unknown key "allowSeling" in options/);
   });
 
+  it("rejects unknown keys inside every array-element record, so nested typos fail loudly too", () => {
+    const cases: Array<[string, (doc: Record<string, unknown>) => void, RegExp]> = [
+      [
+        "asset class",
+        (doc) => {
+          (doc.portfolio as { assetClasses: Array<Record<string, unknown>> }).assetClasses[0]!.taxPrefernce =
+            "prefer_taxable";
+        },
+        /Unknown key "taxPrefernce" in portfolio\.assetClasses\[0\]/,
+      ],
+      [
+        "fund",
+        (doc) => {
+          (doc.portfolio as { funds: Array<Record<string, unknown>> }).funds[0]!.tikcer = "VTI";
+        },
+        /Unknown key "tikcer" in portfolio\.funds\[0\]/,
+      ],
+      [
+        "account",
+        (doc) => {
+          (doc.portfolio as { accounts: Array<Record<string, unknown>> }).accounts[0]!.taxTyp = "taxable";
+        },
+        /Unknown key "taxTyp" in portfolio\.accounts\[0\]/,
+      ],
+      [
+        "holding",
+        (doc) => {
+          (doc.portfolio as { holdings: Array<Record<string, unknown>> }).holdings[0]!.cost_basis = 1;
+        },
+        /Unknown key "cost_basis" in portfolio\.holdings\[0\]/,
+      ],
+      [
+        "target",
+        (doc) => {
+          (doc.targets as Array<Record<string, unknown>>)[0]!.wieght = 10000;
+        },
+        /Unknown key "wieght" in targets\[0\]/,
+      ],
+      [
+        "contribution",
+        (doc) => {
+          (doc.contributions as Array<Record<string, unknown>>)[0]!.ammount = 1;
+        },
+        /Unknown key "ammount" in contributions\[0\]/,
+      ],
+    ];
+    for (const [, mutate, expected] of cases) {
+      const doc = minimalScenario();
+      mutate(doc);
+      expect(() => validateScenario(doc)).toThrow(expected);
+    }
+
+    // Underscore-prefixed comment keys stay legal inside records too.
+    const commented = minimalScenario();
+    (commented.portfolio as { funds: Array<Record<string, unknown>> }).funds[0]!._note = "my 401k fund";
+    expect(() => validateScenario(commented)).not.toThrow();
+  });
+
   it("rejects wrong primitive types and bad enum values with the offending path", () => {
     const badTaxType = minimalScenario();
     (badTaxType.portfolio as { accounts: Array<{ taxType: string }> }).accounts[0]!.taxType = "roth";
