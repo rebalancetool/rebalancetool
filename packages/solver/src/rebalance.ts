@@ -491,7 +491,8 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     }
     if (weightSum !== TOTAL_BPS) {
       throw new Error(
-        `Fund "${fund.id}" asset-class weights must sum to exactly ${TOTAL_BPS} basis points, got ${weightSum}.`,
+        `Fund "${fund.id}" asset-class weights must total exactly 100%, got ` +
+          `${formatBpsAsPercent(weightSum)} (${weightSum} of ${TOTAL_BPS} basis points).`,
       );
     }
   }
@@ -537,7 +538,10 @@ function validate(portfolio: Portfolio, targets: Target[], options: RebalanceOpt
     weightSum += target.weight;
   }
   if (weightSum !== TOTAL_BPS) {
-    throw new Error(`Target weights must sum to exactly ${TOTAL_BPS} basis points, got ${weightSum}.`);
+    throw new Error(
+      `Target weights must total exactly 100%, got ${formatBpsAsPercent(weightSum)} ` +
+        `(${weightSum} of ${TOTAL_BPS} basis points).`,
+    );
   }
 
   for (const contribution of options.contributions) {

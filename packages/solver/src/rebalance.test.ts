@@ -371,7 +371,9 @@ describe("rebalance - blended funds", () => {
       { assetClassId: "intl_stocks", weight: 0 },
       { assetClassId: "us_bonds", weight: 0 },
     ];
-    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(/"vt".*9500/);
+    expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(
+      /"vt".*must total exactly 100%, got 95% \(9500 of 10000 basis points\)/,
+    );
   });
 });
 
@@ -837,10 +839,12 @@ describe("rebalance - core invariants", () => {
     );
   });
 
-  it("rejects targets that do not sum to 10000 bps", () => {
+  it("rejects targets that do not total 100%, speaking percent first", () => {
     const { portfolio } = loadExample();
     const badTargets: Target[] = [{ assetClassId: "us_stocks", weight: 9000 }];
-    expect(() => rebalance(portfolio, badTargets, { contributions: [] })).toThrow(/10000/);
+    expect(() => rebalance(portfolio, badTargets, { contributions: [] })).toThrow(
+      /must total exactly 100%, got 90% \(9000 of 10000 basis points\)/,
+    );
   });
 
   it("rejects a contribution to an unknown account", () => {
