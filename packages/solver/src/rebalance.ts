@@ -103,6 +103,12 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
   }
 
   const newTotal = currentPortfolioTotal + totalContribution;
+  if (newTotal > MAX_PORTFOLIO_CENTS) {
+    throw new Error(
+      `Portfolio total (holdings + contributions) is ${newTotal} cents, above the supported maximum of ` +
+        `${MAX_PORTFOLIO_CENTS} (about $9 billion).`,
+    );
+  }
 
   // --- Step 2: target dollars per asset class ---
   const demands = proportionalAllocate(
@@ -325,6 +331,16 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   return { trades, accounts, resultingAllocation, deviationFromTarget, warnings };
 }
+
+/**
+ * Largest supported post-contribution portfolio total, in integer cents
+ * (~$9.007 billion). The exact class-exposure math multiplies cents by
+ * basis points, and staying under this bound keeps every such product —
+ * and their portfolio-wide sums — inside Number.MAX_SAFE_INTEGER; it also
+ * keeps LP float error far below the solver's epsilons. Enforced up front
+ * so exceeding it is a clear message instead of a numeric cliff.
+ */
+const MAX_PORTFOLIO_CENTS = Math.floor(Number.MAX_SAFE_INTEGER / TOTAL_BPS);
 
 /**
  * Distributes `totalToDistribute` (an integer) across `weights` in

@@ -106,9 +106,18 @@ const cellKey = (accountId: string, fundId: string): string => JSON.stringify([a
  * Subtracted from class-floor constraints. A blend's class exposure is
  * Σ x·(weight/TOTAL_BPS) in floats, which can land a whisper below the
  * exactly-computed integer floor even for the do-nothing solution; the
- * slack is a thousandth of a cent, far too small to admit a real trade.
+ * absolute part is a thousandth of a cent and the relative part tracks how
+ * float error actually grows with position size, so together they stay far
+ * too small to admit a real trade anywhere under rebalance()'s portfolio
+ * cap (at the ~$9B cap the combined slack is still under a cent).
  */
 const FLOOR_EPSILON = 1e-3;
+
+/** Relative component of the class-floor slack (see FLOOR_EPSILON). */
+const FLOOR_RELATIVE = 1e-12;
+
+/** The class floor `value`, slackened for float noise: min ≥ value − (abs + rel·value). */
+const slackenedFloor = (value: number): number => value - (FLOOR_EPSILON + value * FLOOR_RELATIVE);
 
 export function allocateLp(problem: TransportationProblem): Allocation {
   const accounts = [...problem.accounts].sort((a, b) => a.id.localeCompare(b.id));
@@ -349,12 +358,12 @@ function solveLexicographic(
       constraints.set(`devhi ${assetClass.id}`, { max: demand(assetClass.id) });
       constraints.set(`devlo ${assetClass.id}`, { min: demand(assetClass.id) });
       constraints.set(`floor ${assetClass.id}`, {
-        min: Math.min(currentCents, demand(assetClass.id)) - FLOOR_EPSILON,
+        min: slackenedFloor(Math.min(currentCents, demand(assetClass.id))),
       });
       variables.set(`over ${assetClass.id}`, new Map([[`devhi ${assetClass.id}`, -1], ["dev", 1]]));
       variables.set(`under ${assetClass.id}`, new Map([[`devlo ${assetClass.id}`, 1], ["dev", 1]]));
     } else {
-      constraints.set(`floor ${assetClass.id}`, { min: currentCents - FLOOR_EPSILON });
+      constraints.set(`floor ${assetClass.id}`, { min: slackenedFloor(currentCents) });
     }
   }
 

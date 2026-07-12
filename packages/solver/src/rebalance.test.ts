@@ -749,6 +749,34 @@ describe("rebalance - core invariants", () => {
     expect(() => rebalance(portfolio, targets, { contributions: [] })).toThrow(/Fund ids must be non-empty/);
   });
 
+  it("caps the portfolio total at ~$9B with a clear error, and solves cleanly right at the cap", () => {
+    // The cap keeps every cents × basis-points product (and their sums)
+    // inside Number.MAX_SAFE_INTEGER. Exercised with a blend so the
+    // float-heavy class-exposure path runs at the boundary.
+    const maxPortfolioCents = Math.floor(Number.MAX_SAFE_INTEGER / 10000);
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "us", name: "US" },
+        { id: "intl", name: "Intl" },
+      ],
+      funds: [{ id: "vt", ticker: "VT", name: "VT", assetClasses: { us: 5000, intl: 5000 } }],
+      accounts: [{ id: "acct", name: "Account", taxType: "taxable", availableFundIds: ["vt"] }],
+      holdings: [{ accountId: "acct", fundId: "vt", value: maxPortfolioCents }],
+    };
+    const targets: Target[] = [
+      { assetClassId: "us", weight: 5000 },
+      { assetClassId: "intl", weight: 5000 },
+    ];
+
+    const atCap = rebalance(portfolio, targets, { contributions: [], allowSelling: true });
+    expect(atCap.trades).toEqual([]);
+    expect(atCap.warnings).toEqual([]);
+
+    expect(() =>
+      rebalance(portfolio, targets, { contributions: [{ accountId: "acct", amount: 1 }] }),
+    ).toThrow(/above the supported maximum/);
+  });
+
   it("rejects duplicate asset-class and account names, case-insensitively", () => {
     const targets: Target[] = [
       { assetClassId: "a", weight: 10000 },
