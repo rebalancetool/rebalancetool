@@ -17,7 +17,7 @@ test("the compliance disclaimer footer is always present", () => {
   const footer = screen.getByRole("contentinfo");
   expect(footer).toHaveTextContent("This is a calculator, not investment advice.");
   expect(footer).toHaveTextContent(
-    "the funds pre-loaded on first visit are editable placeholders for convenience, not recommendations",
+    "The funds pre-loaded on first visit are editable placeholders for convenience, not recommendations",
   );
   expect(footer).toHaveTextContent("Your data stays in your browser and is never transmitted or stored by this site.");
 });
@@ -64,7 +64,7 @@ test("a contribution row added from the picker feeds the solver; its ✕ clears 
 
 test("the app starts with the fund catalog only: no accounts, targets, or amounts", () => {
   render(<App />);
-  expect(screen.getByRole("heading", { name: "Start with your portfolio" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Build your portfolio" })).toBeInTheDocument();
   expect(screen.queryByText("Can’t rebalance yet")).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Trades" })).not.toBeInTheDocument();
 
@@ -86,7 +86,7 @@ test("Clear all wipes everything back to the getting-started card", async () => 
   render(<App initialScenario={demoScenario} />);
 
   await user.click(screen.getByRole("button", { name: "Clear all" }));
-  expect(screen.getByRole("heading", { name: "Start with your portfolio" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Build your portfolio" })).toBeInTheDocument();
   expect(screen.queryByLabelText("Target weight for US Stocks")).not.toBeInTheDocument();
 });
 

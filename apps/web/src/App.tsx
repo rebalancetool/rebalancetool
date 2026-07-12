@@ -153,13 +153,21 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
           // Until an account exists nothing can be computed: show guidance,
           // not the solver's error.
           <div className="card get-started">
-            <h3>Start with your portfolio</h3>
+            <h3>Build your portfolio</h3>
+            <ul>
+              <li>
+                The funds and asset classes above are a pre-loaded starting point.
+                They're placeholders, not recommendations, and you can rename, replace or remove them.
+              </li>
+              <li>Set each asset class's target percentage, then add your accounts with their current balances.</li>
+              <li>
+                In each account add all funds that you can trade in the account. To prefer trading a specific fund
+                in an account, order it higher.
+              </li>
+              <li>The trades that move your portfolio toward your targets will appear below.</li>
+            </ul>
             <p>
-              The funds above are a pre-loaded starting point — rename, remove, or replace them freely;
-              they're placeholders, not recommendations. Set each asset class's target percentage, then
-              add your accounts with their current balances. The trades that move your portfolio toward
-              your targets will appear here — or open a previously saved file with{" "}
-              <strong>Open file…</strong>
+              You can open a previously saved file with <strong>Open file…</strong>
             </p>
           </div>
         ) : outcome.result ? (
@@ -179,8 +187,8 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
         <p>
           <strong>This is a calculator, not investment advice.</strong> This tool performs arithmetic on
           information you provide. You choose the asset classes, the target allocation, the funds, and which
-          accounts may hold them; the tool computes trades that move your stated holdings toward your stated
-          targets. It does not recommend any security, allocation, or strategy — the funds pre-loaded on
+          accounts may hold them. The tool computes trades that move your stated holdings toward your stated
+          targets. It does not recommend any security, allocation, or strategy. The funds pre-loaded on
           first visit are editable placeholders for convenience, not recommendations. Nothing here is
           investment, tax, or legal advice. Consult a qualified professional before making investment
           decisions.
