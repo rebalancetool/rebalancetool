@@ -161,6 +161,21 @@ test("the demo's VT blend is summarized in the Funds card and editable slice by 
   );
 });
 
+test("a new fund can be added as a blend straight from the add row", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.type(screen.getByLabelText("New fund ticker"), "aoa");
+  await user.selectOptions(screen.getByLabelText("Asset class for new fund"), "__blend__");
+  await user.click(screen.getByRole("button", { name: "Add fund" }));
+
+  // The fund arrives as 100% of the first class with its slice editor
+  // already open, ready to be carved up.
+  expect(screen.getByRole("button", { name: "Asset class blend for AOA" })).toHaveTextContent("100% US Stocks");
+  expect(screen.getByLabelText("Weight of US Stocks in AOA")).toHaveValue("100");
+  expect(screen.getByLabelText("Add asset class to AOA")).toBeInTheDocument();
+});
+
 test("a single-class fund becomes a blend through the 'Blend of classes…' picker", async () => {
   const user = userEvent.setup();
   render(<App />);

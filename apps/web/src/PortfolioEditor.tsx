@@ -277,9 +277,10 @@ function FundsCard({ scenario, onChange }: EditorProps) {
   // summary that toggles membership. Purely view state — no scenario change.
   const [openBlends, setOpenBlends] = useState<Set<string>>(new Set());
   const classNames = new Map(assetClasses.map((c) => [c.id, c.name]));
-  const effectiveNewClassId = assetClasses.some((c) => c.id === newFundClassId)
-    ? newFundClassId
-    : (assetClasses[0]?.id ?? "");
+  const effectiveNewClassId =
+    newFundClassId === BLEND || assetClasses.some((c) => c.id === newFundClassId)
+      ? newFundClassId
+      : (assetClasses[0]?.id ?? "");
   const setBlendOpen = (fundId: string, open: boolean) =>
     setOpenBlends((prev) => {
       const next = new Set(prev);
@@ -364,7 +365,14 @@ function FundsCard({ scenario, onChange }: EditorProps) {
         placeholder="New fund ticker"
         buttonLabel="Add fund"
         disabledReason={assetClasses.length === 0 ? "Add an asset class first." : undefined}
-        onAdd={(ticker) => onChange(addFund(scenario, ticker.toUpperCase(), effectiveNewClassId))}
+        onAdd={(ticker) => {
+          // A brand-new blend starts as 100% of the first class with its
+          // slice editor open, ready to be carved up.
+          const isBlend = effectiveNewClassId === BLEND;
+          const next = addFund(scenario, ticker.toUpperCase(), isBlend ? assetClasses[0]!.id : effectiveNewClassId);
+          if (isBlend) setBlendOpen(next.portfolio.funds[next.portfolio.funds.length - 1]!.id, true);
+          onChange(next);
+        }}
       >
         <select
           aria-label="Asset class for new fund"
@@ -377,6 +385,7 @@ function FundsCard({ scenario, onChange }: EditorProps) {
               {assetClass.name}
             </option>
           ))}
+          <option value={BLEND}>Blend of classes…</option>
         </select>
       </AddRow>
     </div>
