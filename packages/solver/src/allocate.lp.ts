@@ -30,6 +30,15 @@ import { TOTAL_BPS } from "./types.ts";
  *      already pinned minimal, this stage can only pick *which* fund, never
  *      add churn).
  *
+ * Because stage 4 outranks stage 5, *surplus* contribution cash (cash whose
+ * account offers no fund for any remaining gap) is parked in a tax-preferred
+ * class when the account has one, and menu order only picks the fund within
+ * that class. Deliberate asset-location behavior — but it is a policy the
+ * user currently has no way to override (e.g. "my menu order wins", or
+ * "leave surplus as uninvested cash / contributions-to-deploy"; cash is not
+ * a modeled position today). If that comes up, add an option rather than
+ * reordering the stages — see the "surplus contribution cash policy" issue.
+ *
  * Hard constraints: each account's total is fixed (money never leaves an
  * account), non-buyable positions can't grow, sells respect the caller's
  * caps, and no asset class's total may drop below min(current, target) —

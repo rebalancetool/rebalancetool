@@ -81,6 +81,35 @@ describe("allocateLp - buying", () => {
     // Surplus is not warning-worthy: the tables show where it went.
     expect(result.warnings).toEqual([]);
   });
+
+  it("surplus cash follows taxPreference over menu order (the documented stage-4-before-5 tie-break)", () => {
+    // Both classes exactly on target, so deviation is indifferent about the
+    // $10 surplus. Bonds prefer tax-advantaged accounts and this is an IRA,
+    // so tax-preferred placement (stage 4) claims it even though stocks is
+    // the account's #1 menu entry. See the policy note atop allocate.lp.ts.
+    const result = allocateLp(
+      makeProblem({
+        accounts: [{ id: "ira", taxType: "tax_deferred" }],
+        assetClasses: [
+          { id: "bonds", taxPreference: "prefer_tax_advantaged" },
+          { id: "stocks", taxPreference: "neutral" },
+        ],
+        cash: new Map([["ira", 1000]]),
+        demands: new Map([
+          ["bonds", 5000],
+          ["stocks", 5000],
+        ]),
+        current: new Map([
+          ["ira", new Map([["bonds", 5000], ["stocks", 5000]])],
+        ]),
+        preferenceRank: (_accountId, fundId) => (fundId === "stocks" ? 0 : 1),
+      }),
+    );
+
+    const row = result.x.get("ira")!;
+    expect(row.get("bonds")).toBe(6000);
+    expect(row.get("stocks")).toBe(5000);
+  });
 });
 
 describe("allocateLp - selling", () => {

@@ -60,8 +60,10 @@ export interface TransportationProblem {
    * Buy/sell preference of the fund within the account: lower = more
    * preferred (the position in availableFundIds). Must be finite; funds held
    * but not buyable should rank after every buyable fund. Buys for a class
-   * go to its lowest-ranked fund, sells drain the highest-ranked first, and
-   * surplus cash lands in the account's lowest-ranked buyable fund.
+   * go to its lowest-ranked fund and sells drain the highest-ranked first.
+   * This is the *last* tie-breaker: surplus cash follows the asset classes'
+   * taxPreference first, and only lands in the lowest-ranked buyable fund
+   * among the placements the earlier objectives are indifferent about.
    */
   preferenceRank: (accountId: string, fundId: string) => number;
   /**

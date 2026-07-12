@@ -67,8 +67,11 @@ placement, then fund-preference order (full detail in the comment atop
    international there, while the 401(k) buys the bonds back), and blended
    funds are native: it can even sell VT and buy back the international
    slice with VXUS to shed only the US excess.
-3. Contribution cash is always fully invested — surplus beyond every
-   reachable gap lands in the account's most-preferred funds.
+3. Contribution cash is always fully invested — cash may not sit idle in
+   an account. Surplus beyond every reachable gap is placed by the asset
+   classes' `taxPreference` first (e.g. surplus in an IRA parks in a
+   `prefer_tax_advantaged` class when the account offers one), then by the
+   account's fund preference order within the chosen class.
 4. Any gap that survives is reported as a warning, not silently dropped.
    Every trade carries a human-readable `reason`.
 

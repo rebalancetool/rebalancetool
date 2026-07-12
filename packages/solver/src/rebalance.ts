@@ -30,8 +30,8 @@ import type {
  * not bought toward, not sold down, not warned about — so trivial drift
  * never triggers trades. Contributions are always fully invested: cash may
  * not sit idle in an account, so surplus beyond every reachable gap is
- * still placed (the fund-preference objective sends it to the account's
- * most-preferred funds).
+ * still placed — by asset-class taxPreference first, then by the account's
+ * fund preference order (see the stage notes atop allocate.lp.ts).
  *
  * The steps here are bookkeeping, not decisions:
  *
