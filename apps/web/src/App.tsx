@@ -1,6 +1,6 @@
 import { rebalance } from "@rebalancer/solver";
 import type { RebalanceResult, Scenario } from "@rebalancer/solver";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PortfolioEditor } from "./PortfolioEditor.tsx";
 import { ResultView } from "./ResultView.tsx";
 import { emptyScenario, withOptions } from "./scenario-edit.ts";
@@ -22,6 +22,40 @@ function solve(scenario: Scenario): Outcome {
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * A brief "Recomputing…" pulse above the results on every scenario change.
+ * The solver is synchronous — results are already current by the time this
+ * renders — so the pulse is purely perceptual: an edit whose recomputed
+ * output happens to look identical to the previous one still visibly did
+ * something. Not a live region: announcing every keystroke would drown
+ * screen readers, and the results themselves are the real signal.
+ */
+function RecomputeStatus({ scenario }: { scenario: Scenario }) {
+  const [busy, setBusy] = useState(true);
+  useEffect(() => {
+    setBusy(true);
+    const timer = setTimeout(() => setBusy(false), 500);
+    return () => clearTimeout(timer);
+  }, [scenario]);
+  return (
+    <div className="recompute-status">
+      {busy ? (
+        <>
+          <span className="spinner" aria-hidden="true" />
+          Recomputing…
+        </>
+      ) : (
+        <>
+          <span className="status-check" aria-hidden="true">
+            ✓
+          </span>
+          Up to date
+        </>
+      )}
+    </div>
+  );
 }
 
 /** Hand the browser a file to save. DOM-only glue; the content comes from scenario-file.ts. */
@@ -148,6 +182,8 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
         )}
 
         <PortfolioEditor scenario={scenario} onChange={setScenario} />
+
+        {scenario.portfolio.accounts.length > 0 && <RecomputeStatus scenario={scenario} />}
 
         {scenario.portfolio.accounts.length === 0 ? (
           // Until an account exists nothing can be computed: show guidance,

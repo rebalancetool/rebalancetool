@@ -62,6 +62,31 @@ test("a contribution row added from the picker feeds the solver; its ✕ clears 
   expect(within(accounts()).queryByText(/\+\$1,000\.00 cash in/)).not.toBeInTheDocument();
 });
 
+test("every edit pulses the recompute indicator, which settles back to Up to date", async () => {
+  const user = userEvent.setup();
+  render(<App initialScenario={demoScenario} />);
+
+  // The mount pulse settles first.
+  await screen.findByText("Up to date", {}, { timeout: 1500 });
+
+  // An edit whose recomputed output may look identical still shows activity.
+  await user.type(screen.getByLabelText("Current value of VTI in Taxable Brokerage"), "0");
+  expect(screen.getByText("Recomputing…")).toBeInTheDocument();
+  expect(screen.queryByText("Up to date")).not.toBeInTheDocument();
+
+  await screen.findByText("Up to date", {}, { timeout: 1500 });
+});
+
+test("the recompute indicator only exists once an account does", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  expect(screen.queryByText(/Recomputing|Up to date/)).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("New account name"), "My IRA");
+  await user.click(screen.getByRole("button", { name: "Add account" }));
+  expect(screen.getByText("Recomputing…")).toBeInTheDocument();
+});
+
 test("the app starts with the fund catalog only: no accounts, targets, or amounts", () => {
   render(<App />);
   expect(screen.getByRole("heading", { name: "Build your portfolio" })).toBeInTheDocument();

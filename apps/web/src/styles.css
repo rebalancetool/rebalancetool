@@ -324,6 +324,45 @@ thead .num-col {
   color: var(--text-muted);
 }
 
+/* Recompute pulse above the results */
+
+.recompute-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 20px 0 -8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.recompute-status .spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: recompute-spin 0.6s linear infinite;
+}
+
+.recompute-status .status-check {
+  color: var(--buy);
+  font-weight: 600;
+}
+
+@keyframes recompute-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recompute-status .spinner {
+    animation: none;
+    border-top-color: var(--border-strong);
+    border-left-color: var(--accent);
+  }
+}
+
 /* Scenario editors */
 
 .editor-grid {
