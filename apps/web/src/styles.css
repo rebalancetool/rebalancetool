@@ -470,19 +470,6 @@ select {
   background: #fdf0ef;
 }
 
-.total-line {
-  border-top: 1.5px solid var(--border-strong);
-  font-weight: 650;
-}
-
-.total-line.total-ok .num {
-  color: var(--buy);
-}
-
-.total-line.total-bad .num {
-  color: var(--sell);
-}
-
 /* Quiet marker where results will render once an account exists. */
 .results-placeholder {
   margin: 32px 0 0;
