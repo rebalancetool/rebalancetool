@@ -388,9 +388,18 @@ thead .num-col {
 
 .editor-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+/* Two columns only when both cards truly fit their fixed-width controls
+   plus a readable name column. The Funds card gets the larger share: it
+   carries the longest text (full fund names). */
+@media (min-width: 1000px) {
+  .editor-grid {
+    grid-template-columns: minmax(0, 11fr) minmax(0, 13fr);
+  }
 }
 
 .editor-card {
@@ -572,8 +581,12 @@ button:disabled {
   color: var(--text);
 }
 
-.field-row .ticker-input {
-  flex: 0 0 76px;
+/* Wide enough for a six-letter ticker plus the caret.
+   The input[type="text"] repeat keeps this rule's specificity above the
+   flex: 1 base rule for .field-row text inputs. */
+.field-row input[type="text"].ticker-input {
+  flex: 0 0 62px;
+  padding: 4px 5px;
   font-family: var(--mono);
   text-transform: uppercase;
 }
@@ -582,7 +595,7 @@ button:disabled {
 
 .class-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 118px 34px;
+  grid-template-columns: minmax(0, 1fr) auto 96px 34px;
   gap: 8px;
   align-items: center;
   padding: 5px 0;
@@ -601,7 +614,7 @@ button:disabled {
 }
 
 .class-row .amount-input input {
-  width: 90px;
+  width: 68px;
 }
 
 .class-row-header {
@@ -656,11 +669,16 @@ button:disabled {
 }
 
 /* The class cell is one fixed width — select or Blend button alike — so
-   every fund row's boxes line up. */
+   every fund row's boxes line up. Kept as tight as the longest starter
+   class name allows: the flexible name input takes whatever is left. */
 .fund-block .field-row select,
 .blend-summary {
-  width: 176px;
+  width: 150px;
   flex: none;
+}
+
+.fund-block .field-row {
+  gap: 8px;
 }
 
 .blend-summary {

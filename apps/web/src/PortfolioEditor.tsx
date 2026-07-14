@@ -59,8 +59,8 @@ const TAX_TYPE_OPTIONS: { value: TaxType; label: string }[] = [
 
 const TAX_PREFERENCE_OPTIONS: { value: TaxPreference; label: string }[] = [
   { value: "neutral", label: "Neutral" },
-  { value: "prefer_taxable", label: "Prefer taxable" },
-  { value: "prefer_tax_advantaged", label: "Prefer tax-advantaged" },
+  { value: "prefer_taxable", label: "Taxable" },
+  { value: "prefer_tax_advantaged", label: "Tax-advantaged" },
 ];
 
 interface EditorProps {
@@ -99,6 +99,8 @@ function AddRow({
     <div className="add-row">
       <input
         type="text"
+        autoComplete="off"
+        data-1p-ignore
         placeholder={placeholder}
         aria-label={placeholder}
         value={name}
@@ -141,6 +143,8 @@ function AssetClassesCard({ scenario, onChange }: EditorProps) {
         <div className="class-row" key={assetClass.id}>
           <input
             type="text"
+            autoComplete="off"
+            data-1p-ignore
             aria-label={`Asset class name (${assetClass.id})`}
             value={assetClass.name}
             onChange={(event) => onChange(updateAssetClass(scenario, assetClass.id, { name: event.target.value }))}
@@ -330,6 +334,8 @@ function FundsCard({ scenario, onChange }: EditorProps) {
             <div className="field-row">
               <input
                 type="text"
+                autoComplete="off"
+                data-1p-ignore
                 className="ticker-input"
                 aria-label={`Ticker for fund ${fund.id}`}
                 placeholder="Ticker"
@@ -338,6 +344,8 @@ function FundsCard({ scenario, onChange }: EditorProps) {
               />
               <input
                 type="text"
+                autoComplete="off"
+                data-1p-ignore
                 aria-label={`Name for fund ${fund.id}`}
                 placeholder="Full name (optional)"
                 value={fund.name}
@@ -446,6 +454,8 @@ function AccountCard({ scenario, onChange, accountId }: EditorProps & { accountI
       <div className="account-card-header">
         <input
           type="text"
+          autoComplete="off"
+          data-1p-ignore
           aria-label={`Account name (${account.id})`}
           value={account.name}
           onChange={(event) => onChange(updateAccount(scenario, account.id, { name: event.target.value }))}

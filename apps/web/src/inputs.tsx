@@ -28,6 +28,8 @@ function AmountInput({ value, onValue, toText, parse, label, affix, placeholder 
       <input
         type="text"
         inputMode="decimal"
+        autoComplete="off"
+        data-1p-ignore
         aria-label={label}
         aria-invalid={invalid || undefined}
         placeholder={placeholder ?? "0"}
