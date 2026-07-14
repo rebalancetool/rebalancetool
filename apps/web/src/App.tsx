@@ -242,6 +242,20 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
           Your data stays in your browser and is never transmitted or stored by this site. Reloading
           clears the page — use <strong>Save file</strong> to keep your work.
         </p>
+        {/* Links open in a new tab: all state lives in this page, so
+            navigating away would discard an unsaved portfolio. */}
+        <p>
+          rebalancetool is free and open source (MIT license), so the calculations are public and
+          auditable:{" "}
+          <a href="https://github.com/rebalancetool/rebalancetool" target="_blank" rel="noreferrer">
+            view the source
+          </a>{" "}
+          or{" "}
+          <a href="https://github.com/rebalancetool/rebalancetool/issues" target="_blank" rel="noreferrer">
+            report an issue
+          </a>{" "}
+          on GitHub.
+        </p>
       </footer>
     </div>
   );

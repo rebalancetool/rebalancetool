@@ -20,6 +20,10 @@ test("the compliance disclaimer footer is always present", () => {
     "The funds pre-loaded on first visit are editable placeholders for convenience, not recommendations",
   );
   expect(footer).toHaveTextContent("Your data stays in your browser and is never transmitted or stored by this site.");
+  // The open-source attribution links out without discarding page state.
+  const source = within(footer).getByRole("link", { name: "view the source" });
+  expect(source).toHaveAttribute("href", "https://github.com/rebalancetool/rebalancetool");
+  expect(source).toHaveAttribute("target", "_blank");
 });
 
 test("breaking the targets total replaces results with an error, fixing it brings them back", async () => {

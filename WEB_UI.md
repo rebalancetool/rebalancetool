@@ -144,7 +144,9 @@ calculator performing arithmetic on user-supplied inputs, not
 personalized investment advice, and data never leaves the browser. Keep
 it visible on every layout change — presenting impersonal calculation
 (rather than security recommendations) is a legal posture, not just
-copy.
+copy. It also carries the open-source attribution (MIT, with GitHub
+source/issues links); those links open in a new tab because navigating
+away would discard the page's unsaved state.
 
 **Save file / Open file…** in the header save and restore the complete
 scenario. The file is the solver's canonical `Scenario` document — exactly

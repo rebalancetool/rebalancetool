@@ -504,6 +504,16 @@ select {
   color: var(--text);
 }
 
+.app-footer a {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.app-footer a:hover {
+  color: var(--accent);
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
