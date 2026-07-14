@@ -153,8 +153,8 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
                 <li>Choose a target asset allocation.</li>
                 <li>Enter your current investments and the funds each account can trade.</li>
                 <li>
-                  We show the trades that reach your targets — every account at once, tax-aware,
-                  with no unnecessary selling.
+                  See the trades that reach your targets: all your accounts, tax-aware, and no
+                  unnecessary selling.
                 </li>
               </ol>
               <p className="how-privacy">
