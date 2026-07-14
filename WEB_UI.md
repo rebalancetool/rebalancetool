@@ -18,11 +18,11 @@ catalog of common index funds and their asset classes
 (`starter-scenario.ts`) — an editable convenience, deliberately with
 **no accounts, holdings, or target percentages**: pre-filling those
 could read as a suggested portfolio, and the compliance posture is that
-every dollar amount and percentage on screen was stated by the user. A
-getting-started card points the way; to see a fully populated run, load
-any fixture from `packages/solver/fixtures/` via **Open file…** (the UI
-tests drive a populated household through App's `initialScenario`
-prop).
+every dollar amount and percentage on screen was stated by the user.
+The header's "How it works" steps and short hints beside each control
+point the way; to see a fully populated run, load any fixture from
+`packages/solver/fixtures/` via **Open file…** (the UI tests drive a
+populated household through App's `initialScenario` prop).
 
 To test a production build instead of the dev server:
 

@@ -181,26 +181,13 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
         {scenario.portfolio.accounts.length > 0 && <RecomputeStatus scenario={scenario} />}
 
         {scenario.portfolio.accounts.length === 0 ? (
-          // Until an account exists nothing can be computed: show guidance,
-          // not the solver's error.
-          <div className="card get-started">
-            <h3>Build your portfolio</h3>
-            <ul>
-              <li>
-                The funds and asset classes above are a pre-loaded starting point.
-                They're placeholders, not recommendations, and you can rename, replace or remove them.
-              </li>
-              <li>Set each asset class's target percentage, then add your accounts with their current balances.</li>
-              <li>
-                In each account add all funds that you can trade in the account. To prefer trading a specific fund
-                in an account, order it higher.
-              </li>
-              <li>The trades that move your portfolio toward your targets will appear below.</li>
-            </ul>
-            <p>
-              You can open a previously saved file with <strong>Open file…</strong>
-            </p>
-          </div>
+          // Until an account exists nothing can be computed: a quiet
+          // placeholder marks where results will render, instead of the
+          // solver's error. The real guidance lives next to each control.
+          <p className="empty-note results-placeholder">
+            Trades will appear here once you add an account — or load a previously saved
+            file with <strong>Open file…</strong>
+          </p>
         ) : outcome.result ? (
           <ResultView scenario={scenario} result={outcome.result} />
         ) : (

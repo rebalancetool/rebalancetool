@@ -483,22 +483,15 @@ select {
   color: var(--sell);
 }
 
-/* First-run guidance card (shown while the portfolio has no asset classes). */
-.get-started {
-  margin-top: 32px;
-  border-style: dashed;
+/* Quiet marker where results will render once an account exists. */
+.results-placeholder {
+  margin: 32px 0 0;
 }
 
-.get-started h3 {
-  margin: 0 0 6px;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.get-started p {
-  margin: 0;
-  color: var(--text-muted);
-  max-width: 70ch;
+/* Muted hint sitting directly under a section h2, outside any card. */
+.section-hint {
+  margin: -6px 0 12px;
+  max-width: 72ch;
 }
 
 /* Compliance footer: quiet but always present and readable. */

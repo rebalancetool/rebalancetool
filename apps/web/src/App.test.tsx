@@ -89,7 +89,7 @@ test("the recompute indicator only exists once an account does", async () => {
 
 test("the app starts with the fund catalog only: no accounts, targets, or amounts", () => {
   render(<App />);
-  expect(screen.getByRole("heading", { name: "Build your portfolio" })).toBeInTheDocument();
+  expect(screen.getByText(/Trades will appear here once you add an account/)).toBeInTheDocument();
   expect(screen.queryByText("Can’t rebalance yet")).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Trades" })).not.toBeInTheDocument();
 
@@ -106,12 +106,12 @@ test("the app starts with the fund catalog only: no accounts, targets, or amount
   expect(screen.queryByLabelText(/Account name/)).not.toBeInTheDocument();
 });
 
-test("Clear all wipes everything back to the getting-started card", async () => {
+test("Clear all wipes everything back to the empty state", async () => {
   const user = userEvent.setup();
   render(<App initialScenario={demoScenario} />);
 
   await user.click(screen.getByRole("button", { name: "Clear all" }));
-  expect(screen.getByRole("heading", { name: "Build your portfolio" })).toBeInTheDocument();
+  expect(screen.getByText(/Trades will appear here once you add an account/)).toBeInTheDocument();
   expect(screen.queryByLabelText("Target weight for US Stocks")).not.toBeInTheDocument();
 });
 
