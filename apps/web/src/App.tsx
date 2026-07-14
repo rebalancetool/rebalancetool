@@ -3,7 +3,7 @@ import type { RebalanceResult, Scenario } from "@rebalancer/solver";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PortfolioEditor } from "./PortfolioEditor.tsx";
 import { ResultView } from "./ResultView.tsx";
-import { emptyScenario, withOptions } from "./scenario-edit.ts";
+import { emptyScenario } from "./scenario-edit.ts";
 import { scenarioFromJson, scenarioToJson } from "./scenario-file.ts";
 import { starterScenario } from "./starter-scenario.ts";
 import { OptionsEditor } from "./ScenarioEditor.tsx";
@@ -81,7 +81,6 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const outcome = useMemo(() => solve(scenario), [scenario]);
-  const allowTaxableSells = scenario.options?.sellInTaxableAccounts ?? false;
 
   const onFileChosen = async (file: File | undefined) => {
     if (!file) return;
@@ -101,10 +100,21 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
             <h1>
               <img className="wordmark" src="/wordmark.svg" alt="rebalancetool" height={48} />
             </h1>
-            <p className="tagline">
-              See the exact trades that rebalance your whole portfolio toward your targets —
-              every account at once, tax-aware, right in your browser.
-            </p>
+            <div className="tagline">
+              <p className="how-title">How it works:</p>
+              <ol className="how-steps">
+                <li>Choose a target asset allocation.</li>
+                <li>Enter your current investments and the funds each account can trade.</li>
+                <li>
+                  We show the trades that reach your targets — every account at once, tax-aware,
+                  with no unnecessary selling.
+                </li>
+              </ol>
+              <p className="how-privacy">
+                Your data never leaves your browser. <strong>Save file</strong> keeps your setup for
+                next time.
+              </p>
+            </div>
           </div>
           <div className="header-actions">
             <button
@@ -158,21 +168,6 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
             </div>
           </div>
         </header>
-
-        <label className="check-row taxable-guard">
-          <input
-            type="checkbox"
-            aria-label="Allow selling in taxable accounts"
-            checked={allowTaxableSells}
-            onChange={(event) => setScenario(withOptions(scenario, { sellInTaxableAccounts: event.target.checked }))}
-          />
-          <span>
-            Allow selling in taxable accounts
-            <span className="editor-hint">
-              Sells there can realize capital gains — uncheck to rebalance only tax-advantaged accounts by selling.
-            </span>
-          </span>
-        </label>
 
         {fileError && (
           <div className="card solve-error" role="alert">

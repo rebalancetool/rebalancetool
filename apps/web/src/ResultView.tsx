@@ -63,27 +63,30 @@ function groupTradesByAccount(trades: Trade[]): { accountId: string; trades: Tra
 }
 
 /**
- * Settings that differ from what the page presents as normal (selling on,
- * default tolerance, no trade floor), summarized so tucked-away
- * settings can never invisibly shape the results. The taxable-sell guard
- * isn't listed: its checkbox is always visible at the top of the page.
+ * The settings summary beside the Trades heading. Every setting lives
+ * behind ⚙ Settings, so this note is what keeps tucked-away settings from
+ * invisibly shaping the results: the selling posture is *always* stated —
+ * it's the setting with tax consequences — and the other knobs are listed
+ * whenever they differ from the page's defaults.
  */
-function describeNonDefaultOptions(options: Scenario["options"]): string | null {
+function describeOptions(options: Scenario["options"]): string {
   const notes: string[] = [];
   if (!(options?.allowSelling ?? false)) notes.push("selling off");
+  else if (options?.sellInTaxableAccounts ?? false) notes.push("may sell in taxable accounts");
+  else notes.push("no selling in taxable accounts");
   const tolerance = options?.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
   if (tolerance !== DEFAULT_TOLERANCE_BPS) notes.push(`tolerance ±${formatBpsAsPercent(tolerance)}`);
   const minTrade = options?.minTradeCents ?? 0;
   if (minTrade > 0) notes.push(`min trade ${formatCents(minTrade)}`);
-  return notes.length > 0 ? notes.join(" · ") : null;
+  return notes.join(" · ");
 }
 
 /** The note sits beside the h2, not inside it, so the section's accessible name stays "Trades". */
-function TradesHeading({ optionsNote }: { optionsNote: string | null }) {
+function TradesHeading({ optionsNote }: { optionsNote: string }) {
   return (
     <div className="heading-row">
       <h2 id="trades-heading">Trades</h2>
-      {optionsNote && <span className="options-note">{optionsNote}</span>}
+      <span className="options-note">{optionsNote}</span>
     </div>
   );
 }
@@ -95,7 +98,7 @@ function TradesSection({
 }: {
   result: RebalanceResult;
   lookups: Lookups;
-  optionsNote: string | null;
+  optionsNote: string;
 }) {
   if (result.trades.length === 0) {
     return (
@@ -241,7 +244,7 @@ export function ResultView({ scenario, result }: { scenario: Scenario; result: R
           </ul>
         </div>
       )}
-      <TradesSection result={result} lookups={lookups} optionsNote={describeNonDefaultOptions(scenario.options)} />
+      <TradesSection result={result} lookups={lookups} optionsNote={describeOptions(scenario.options)} />
       <AllocationSection result={result} lookups={lookups} />
       <AccountsSection result={result} lookups={lookups} />
     </div>

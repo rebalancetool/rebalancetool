@@ -81,11 +81,9 @@ body {
   box-shadow: 0 10px 28px rgba(26, 33, 41, 0.18);
 }
 
-/* The always-visible taxable-sell guard under the header. */
-.taxable-guard {
-  border-bottom: none;
-  margin-top: 10px;
-  max-width: 70ch;
+/* A checkbox that depends on the one above it (taxable sells under Allow selling). */
+.check-row-nested {
+  padding-left: 24px;
 }
 
 /* Small annotation next to the Trades heading when settings are non-default. */
@@ -122,6 +120,25 @@ body {
   margin: 4px 0 0;
   color: var(--text-muted);
   max-width: 60ch;
+}
+
+.tagline .how-title {
+  margin: 0;
+  font-weight: 550;
+}
+
+.tagline .how-steps {
+  margin: 4px 0 0;
+  padding-left: 22px;
+}
+
+.tagline .how-steps li {
+  margin-top: 2px;
+}
+
+.tagline .how-privacy {
+  margin: 6px 0 0;
+  font-size: 13px;
 }
 
 /* Numbers align in columns everywhere they appear. */

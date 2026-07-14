@@ -61,5 +61,6 @@ export const demoScenario: Scenario = {
     { accountId: "k401", amount: 15000 },
     { accountId: "hsa", amount: 5000 },
   ],
-  options: { allowSelling: true, sellInTaxableAccounts: true },
+  // Mirrors the UI's default posture: selling on, taxable accounts protected.
+  options: { allowSelling: true, sellInTaxableAccounts: false },
 };

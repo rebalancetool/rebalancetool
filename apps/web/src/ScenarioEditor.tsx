@@ -29,9 +29,20 @@ export function OptionsEditor({ scenario, onChange }: EditorProps) {
         />
         <span>
           Allow selling
+          <span className="editor-hint">Rotate overweight positions into underweight ones.</span>
+        </span>
+      </label>
+      <label className="check-row check-row-nested">
+        <input
+          type="checkbox"
+          aria-label="Allow selling in taxable accounts"
+          checked={options.sellInTaxableAccounts ?? false}
+          onChange={(event) => onChange(withOptions(scenario, { sellInTaxableAccounts: event.target.checked }))}
+        />
+        <span>
+          Allow selling in taxable accounts
           <span className="editor-hint">
-            Rotate overweight positions into underweight ones. Taxable accounts are governed by the checkbox on the
-            main page.
+            Sells there can realize capital gains. Off = rebalance only tax-advantaged accounts by selling.
           </span>
         </span>
       </label>

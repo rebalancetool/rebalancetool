@@ -352,17 +352,23 @@ test("selling is on by default; turning it off in Settings removes sells and fla
   expect(within(trades()).getByText(/selling off/)).toBeInTheDocument();
 });
 
-test("taxable sells are on by default; unchecking the checkbox protects taxable accounts", async () => {
+test("taxable sells are off by default and flagged; enabling them in Settings flips both", async () => {
   const user = userEvent.setup();
   render(<App initialScenario={demoScenario} />);
 
   const trades = () => screen.getByRole("region", { name: "Trades" });
   const taxableTradeCard = () =>
     within(trades()).queryByRole("heading", { name: /Taxable Brokerage/ })?.closest(".card") as HTMLElement | null;
-  // The drifted demo portfolio uses a taxable sell out of the box.
-  expect(within(taxableTradeCard()!).getAllByText("SELL").length).toBeGreaterThan(0);
+  // Out of the box the taxable account is protected, and the note beside
+  // the Trades heading says so — the posture must never be invisible.
+  expect(within(trades()).getByText(/no selling in taxable accounts/)).toBeInTheDocument();
+  expect(taxableTradeCard() === null || within(taxableTradeCard()!).queryAllByText("SELL").length === 0).toBe(true);
 
+  await user.click(screen.getByRole("button", { name: /Settings/ }));
   await user.click(screen.getByLabelText("Allow selling in taxable accounts"));
 
-  expect(taxableTradeCard() === null || within(taxableTradeCard()!).queryAllByText("SELL").length === 0).toBe(true);
+  // The drifted demo portfolio sells in the taxable account once allowed,
+  // and the note flips to say sells there may happen.
+  expect(within(trades()).getByText(/may sell in taxable accounts/)).toBeInTheDocument();
+  expect(within(taxableTradeCard()!).getAllByText("SELL").length).toBeGreaterThan(0);
 });

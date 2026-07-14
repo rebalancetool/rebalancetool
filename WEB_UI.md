@@ -128,14 +128,15 @@ The page is one screen, top to bottom:
    If the current inputs are invalid (targets don't total 100%, say), the
    solver's own error message renders where the results would be.
 
-Selling is **on by default** in the UI, taxable accounts included (the
-solver itself stays buy-only by default); the always-visible "Allow
-selling in taxable accounts" checkbox at the top starts checked — uncheck
-it to rebalance only tax-advantaged accounts by selling. The rarer knobs —
-allow selling at all, tolerance band, minimum sell-funded trade — live
-behind the ⚙ Settings button; whenever any of them is non-default, a
-summary note appears next to the Trades heading so tucked-away settings
-can never invisibly shape the results.
+Selling is **on by default** in the UI (the solver itself stays buy-only
+by default) — but never in taxable accounts, where sells could realize
+capital gains, until the user opts in. All the knobs — allow selling,
+allow selling in taxable accounts, tolerance band, minimum sell-funded
+trade — live behind the ⚙ Settings button. A summary note beside the
+Trades heading always states the selling posture ("no selling in taxable
+accounts" / "may sell in taxable accounts" / "selling off") and lists any
+other non-default knobs, so tucked-away settings can never invisibly
+shape the results.
 
 A permanent footer carries the compliance disclaimer: the tool is a
 calculator performing arithmetic on user-supplied inputs, not

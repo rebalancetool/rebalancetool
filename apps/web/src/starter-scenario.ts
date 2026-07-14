@@ -55,6 +55,6 @@ export function starterScenario(): Scenario {
     },
     targets: [],
     contributions: [],
-    options: { allowSelling: true, sellInTaxableAccounts: true },
+    options: { allowSelling: true, sellInTaxableAccounts: false },
   };
 }
