@@ -347,6 +347,22 @@ test("fund preference order can be changed from the drag handle's keyboard mode"
   expect(screen.getByLabelText("Reorder VTI in Taxable Brokerage (position 2)")).toBeInTheDocument();
 });
 
+test("the settings popover light-dismisses on an outside click, but not an inside one", async () => {
+  const user = userEvent.setup();
+  render(<App initialScenario={demoScenario} />);
+
+  await user.click(screen.getByRole("button", { name: "Rebalance settings" }));
+  expect(screen.getByLabelText("Allow selling")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("heading", { name: "rebalancetool" }));
+  expect(screen.queryByLabelText("Allow selling")).not.toBeInTheDocument();
+
+  // Interacting with a control inside the popover must not close it.
+  await user.click(screen.getByRole("button", { name: "Rebalance settings" }));
+  await user.click(screen.getByLabelText("Allow selling in taxable accounts"));
+  expect(screen.getByLabelText("Allow selling")).toBeInTheDocument();
+});
+
 test("selling is on by default; turning it off in Settings removes sells and flags it", async () => {
   const user = userEvent.setup();
   render(<App initialScenario={demoScenario} />);

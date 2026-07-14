@@ -42,8 +42,21 @@ function SettingsButton({
   label?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLDivElement>(null);
+
+  // Light dismiss: like any dropdown, a click anywhere outside closes the
+  // popover (Escape already does). The listener exists only while open.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (anchor.current && !anchor.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
   return (
-    <div className="settings-anchor">
+    <div className="settings-anchor" ref={anchor}>
       <button type="button" aria-expanded={open} aria-label={label} onClick={() => setOpen((wasOpen) => !wasOpen)}>
         ⚙ Settings
       </button>
