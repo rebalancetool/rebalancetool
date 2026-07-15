@@ -555,10 +555,14 @@ describe("rebalance - asset location optimization", () => {
     );
   });
 
-  it("stays put when the taxable side of the swap is not sellable", () => {
+  it("stays put when the taxable side of the swap is not sellable, and says which lever is blocking", () => {
     // Relocating the bonds out of the brokerage requires selling there;
     // without sellInTaxableAccounts the class floors pin everything, and
     // the mode must not half-do the swap (e.g. churn the IRA pointlessly).
+    // But silence would look like the checkbox does nothing — so a warning
+    // states, per class, exactly the placement the guard is blocking
+    // (measured by re-solving with the guard lifted, so it never fires when
+    // relocation is impossible for other reasons).
     const { portfolio, targets } = invertedLocationHousehold();
     const result = rebalance(portfolio, targets, {
       contributions: [],
@@ -566,6 +570,26 @@ describe("rebalance - asset location optimization", () => {
       optimizeAssetLocation: true,
     });
     expect(result.trades).toEqual([]);
+    expect(result.warnings).toEqual([
+      "US Bonds could move $1,000.00 into tax-advantaged accounts, but selling in taxable accounts is disabled.",
+      "US Stocks could move $1,000.00 into taxable accounts, but selling in taxable accounts is disabled.",
+    ]);
+  });
+
+  it("does not warn about the taxable-sell guard when relocation is impossible anyway", () => {
+    // The IRA's menu has no bond fund, so the bonds have nowhere preferred
+    // to go (and the stocks can't leave the IRA without them): enabling
+    // taxable sells would change nothing, and the warning must not claim
+    // otherwise.
+    const { portfolio, targets } = invertedLocationHousehold();
+    portfolio.accounts[1]!.availableFundIds = ["vti"];
+    const result = rebalance(portfolio, targets, {
+      contributions: [],
+      allowSelling: true,
+      optimizeAssetLocation: true,
+    });
+    expect(result.trades).toEqual([]);
+    expect(result.warnings).toEqual([]);
   });
 
   it("is inert without allowSelling", () => {
@@ -611,6 +635,12 @@ describe("rebalance - asset location optimization", () => {
     }
     const vtiSell = result.trades.find((t) => t.action === "sell")!;
     expect(vtiSell.reason).toBe("US Stocks prefers taxable accounts; selling $500.00 of VTI in IRA to relocate it.");
+    // Location is improved but not fixed: the rest still needs taxable
+    // sells, and the warnings quantify exactly the remainder.
+    expect(result.warnings).toEqual([
+      "US Bonds could move $500.00 into tax-advantaged accounts, but selling in taxable accounts is disabled.",
+      "US Stocks could move $500.00 into taxable accounts, but selling in taxable accounts is disabled.",
+    ]);
   });
 });
 

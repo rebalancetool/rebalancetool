@@ -138,7 +138,13 @@ the header, one in the status bar). "Optimize asset location"
 relocate asset classes into the account types their tax preference
 names even when the allocation is already on target; like taxable
 selling it implies "allow selling", and turning selling off clears both
-dependent flags (`withOptions` keeps them coherent). The status bar
+dependent flags (`withOptions` keeps them coherent). It deliberately
+does *not* imply "allow selling in taxable accounts" — that's the one
+setting with capital-gains consequences, so it stays an explicit opt-in;
+instead, when that guard is all that blocks better placement, the
+solver's warnings say exactly how many dollars of which class could
+move (a counterfactual computed by the solver — the UI just renders
+it). The status bar
 between the editor and the results carries the recompute pulse plus a
 settings summary that always states the selling posture ("selling on ·
 taxable accounts protected" / "may sell in taxable accounts" / "selling

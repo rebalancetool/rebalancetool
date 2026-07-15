@@ -335,6 +335,54 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     // bigger gaps — visible in the allocation, not warning-worthy.
   }
 
+  // Location-mode feedback: when the taxable-sell guard is all that stands
+  // between the user and better asset location, say so — otherwise enabling
+  // optimizeAssetLocation silently does nothing for the most common
+  // misplacement (a tax-preferred class parked in a taxable account). The
+  // check is a counterfactual, not a heuristic: re-run the allocator with
+  // the guard lifted and report, per class, the preferred-account dollars
+  // it would gain — so the warning never fires when relocation is
+  // impossible for other reasons (no fund, no capacity, minTradeCents), and
+  // the amount it states is exactly what enabling taxable sells unlocks.
+  if (optimizeAssetLocation && allowSelling && !sellInTaxableAccounts) {
+    const unblocked = allocateLp({
+      ...problem,
+      sellable: (accountId, fundId) => heldFundValues.get(accountId)!.get(fundId) ?? 0,
+    });
+    // Exact integer cent-basis-points of the class held in accounts its
+    // preference names.
+    const preferredCentBps = (x: Map<string, Map<string, number>>, classId: string, pref: TaxPreference): number => {
+      let total = 0;
+      for (const account of portfolio.accounts) {
+        if (taxTypeRank(pref, account.taxType) !== 0) continue;
+        for (const [fundId, value] of x.get(account.id) ?? []) {
+          total += value * (weightsByFund.get(fundId)!.get(classId) ?? 0);
+        }
+      }
+      return total;
+    };
+    // Slack: the two runs round floats to cents independently, so up to a
+    // cent per position of repair noise can differ between them; anything
+    // within the tolerance band is as ignorable as band-scale drift.
+    const slackCents = problem.toleranceCents + portfolio.holdings.length + portfolio.accounts.length;
+    const blocked = portfolio.assetClasses
+      .flatMap((assetClass) => {
+        const pref = assetClass.taxPreference ?? "neutral";
+        if (pref === "neutral") return [];
+        const gainCentBps =
+          preferredCentBps(unblocked.x, assetClass.id, pref) - preferredCentBps(allocation.x, assetClass.id, pref);
+        const gainCents = Math.round(gainCentBps / TOTAL_BPS);
+        return gainCents > slackCents ? [{ assetClass, pref, gainCents }] : [];
+      })
+      .sort((a, b) => b.gainCents - a.gainCents || a.assetClass.id.localeCompare(b.assetClass.id));
+    for (const entry of blocked) {
+      warnings.push(
+        `${entry.assetClass.name} could move ${formatDollars(entry.gainCents)} into ` +
+          `${preferredKind(entry.pref)} accounts, but selling in taxable accounts is disabled.`,
+      );
+    }
+  }
+
   // --- per-account before/after breakdown ---
   const tradeDeltas = new Map<string, Map<string, number>>();
   for (const trade of trades) {
