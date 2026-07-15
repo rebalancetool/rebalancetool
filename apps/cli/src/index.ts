@@ -83,6 +83,17 @@ function renderColumns(rows: string[][], indent: string): string[] {
   );
 }
 
+/**
+ * Position of each account in the scenario document. The solver's output is
+ * ordered by account *id* (an order-independence invariant); presentation
+ * follows the scenario's own account order instead, so all output sections
+ * line up positionally.
+ */
+function accountRank(scenario: Scenario): (accountId: string) => number {
+  const rankByAccountId = new Map(scenario.portfolio.accounts.map((a, index) => [a.id, index]));
+  return (accountId) => rankByAccountId.get(accountId) ?? rankByAccountId.size;
+}
+
 function printTrades(scenario: Scenario, result: RebalanceResult): void {
   if (result.trades.length === 0) {
     console.log("No trades needed.");
@@ -90,11 +101,14 @@ function printTrades(scenario: Scenario, result: RebalanceResult): void {
   }
   const accountsById = new Map(scenario.portfolio.accounts.map((a) => [a.id, a]));
   const fundsById = new Map(scenario.portfolio.funds.map((f) => [f.id, f]));
+  const rank = accountRank(scenario);
+  // Stable re-sort to the scenario's account order; within an account the
+  // solver's order (sells before buys) is preserved.
+  const trades = [...result.trades].sort((a, b) => rank(a.accountId) - rank(b.accountId));
 
   console.log("Trades:");
   let currentAccountId = "";
-  for (const trade of result.trades) {
-    // Trades arrive sorted by account with sells before buys.
+  for (const trade of trades) {
     if (trade.accountId !== currentAccountId) {
       const account = accountsById.get(trade.accountId)!;
       console.log(`\n  ${account.name} (${account.taxType})`);
@@ -134,8 +148,9 @@ function printAccounts(scenario: Scenario, result: RebalanceResult): void {
   const accountsById = new Map(scenario.portfolio.accounts.map((a) => [a.id, a]));
   const fundsById = new Map(scenario.portfolio.funds.map((f) => [f.id, f]));
 
+  const rank = accountRank(scenario);
   console.log("\nAccounts:");
-  for (const breakdown of result.accounts) {
+  for (const breakdown of [...result.accounts].sort((a, b) => rank(a.accountId) - rank(b.accountId))) {
     const account = accountsById.get(breakdown.accountId)!;
     console.log(`\n  ${account.name} (${account.taxType})`);
     const rows: string[][] = [["", "current", "trades", "final"]];

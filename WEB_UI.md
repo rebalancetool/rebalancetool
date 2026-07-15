@@ -121,7 +121,10 @@ The page is one screen, top to bottom:
    account (menu entry and holding). Removals cascade — deleting an asset
    class deletes its funds, their holdings, menu entries, and its target —
    so the document always stays referentially intact.
-2. **Results** — recomputed by `rebalance()` on every edit. Trades grouped
+2. **Results** — recomputed by `rebalance()` on every edit. Account
+   sections follow the scenario's account order (the solver's output is
+   id-ordered by design; presentation reorders it to line up with the
+   editor). Trades grouped
    by account with each trade's human-readable reason shown in full, the
    portfolio-by-asset-class table (current → target → trades → final →
    vs target), per-account before/after position tables, and any warnings.

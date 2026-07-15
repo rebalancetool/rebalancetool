@@ -6,6 +6,11 @@ import { formatCents, formatDelta, formatSignedBpsAsPercent } from "./format.ts"
  * was computed by the solver — this file must never do money math beyond
  * formatting. Mirrors the CLI's output structure (trades grouped by account,
  * allocation vs target, per-account before/after), which is the approved UX.
+ *
+ * The solver's output is deliberately ordered by account *id* (an
+ * order-independence invariant); presentation reorders the account sections
+ * to the scenario's account order, so results line up positionally with the
+ * editor above them.
  */
 
 const TAX_TYPE_LABELS: Record<TaxType, string> = {
@@ -17,6 +22,8 @@ const TAX_TYPE_LABELS: Record<TaxType, string> = {
 interface Lookups {
   accountName: (id: string) => string;
   accountTaxType: (id: string) => TaxType | undefined;
+  /** Position of the account in the scenario document — the editor's order. */
+  accountRank: (id: string) => number;
   fundLabel: (id: string) => string;
   fundName: (id: string) => string;
   className: (id: string) => string;
@@ -24,11 +31,13 @@ interface Lookups {
 
 function buildLookups(scenario: Scenario): Lookups {
   const accounts = new Map(scenario.portfolio.accounts.map((a) => [a.id, a]));
+  const rankByAccountId = new Map(scenario.portfolio.accounts.map((a, index) => [a.id, index]));
   const funds = new Map(scenario.portfolio.funds.map((f) => [f.id, f]));
   const classes = new Map(scenario.portfolio.assetClasses.map((c) => [c.id, c]));
   return {
     accountName: (id) => accounts.get(id)?.name ?? id,
     accountTaxType: (id) => accounts.get(id)?.taxType,
+    accountRank: (id) => rankByAccountId.get(id) ?? rankByAccountId.size,
     fundLabel: (id) => {
       const fund = funds.get(id);
       return fund?.ticker || fund?.name || id;
@@ -47,7 +56,10 @@ function AccountHeading({ name, taxType }: { name: string; taxType: TaxType | un
   );
 }
 
-/** Trades arrive from the solver sorted by account (sells before buys); group consecutive runs. */
+/**
+ * Trades arrive from the solver sorted by account id (sells before buys);
+ * group consecutive runs. The caller reorders the groups for display.
+ */
 function groupTradesByAccount(trades: Trade[]): { accountId: string; trades: Trade[] }[] {
   const groups: { accountId: string; trades: Trade[] }[] = [];
   for (const trade of trades) {
@@ -75,7 +87,9 @@ function TradesSection({ result, lookups }: { result: RebalanceResult; lookups: 
   return (
     <section aria-labelledby="trades-heading">
       <h2 id="trades-heading">Trades</h2>
-      {groupTradesByAccount(result.trades).map((group) => (
+      {groupTradesByAccount(result.trades)
+        .sort((a, b) => lookups.accountRank(a.accountId) - lookups.accountRank(b.accountId))
+        .map((group) => (
         <div className="card" key={group.accountId}>
           <AccountHeading
             name={lookups.accountName(group.accountId)}
@@ -149,7 +163,9 @@ function AccountsSection({ result, lookups }: { result: RebalanceResult; lookups
   return (
     <section aria-labelledby="accounts-heading">
       <h2 id="accounts-heading">Accounts</h2>
-      {result.accounts.map((breakdown) => (
+      {[...result.accounts]
+        .sort((a, b) => lookups.accountRank(a.accountId) - lookups.accountRank(b.accountId))
+        .map((breakdown) => (
         <div className="card" key={breakdown.accountId}>
           <AccountHeading
             name={lookups.accountName(breakdown.accountId)}

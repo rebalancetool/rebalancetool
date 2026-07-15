@@ -108,6 +108,42 @@ test("renders per-account before/after positions with em dash for untouched valu
   expect(within(accounts).getByText(/\+\$500\.00 cash in/)).toBeInTheDocument();
 });
 
+test("account sections follow the scenario's account order, not the solver's id order", () => {
+  // The scenario lists the brokerage first, but "ira" sorts before
+  // "taxable", so the solver's output arrives in the opposite order. Both
+  // the trade cards and the account summaries must line up with the editor.
+  const twoAccounts: Scenario = {
+    ...scenario,
+    portfolio: {
+      ...scenario.portfolio,
+      accounts: [
+        { id: "taxable", name: "Brokerage", taxType: "taxable", availableFundIds: ["vti"] },
+        { id: "ira", name: "Traditional IRA", taxType: "tax_deferred", availableFundIds: ["vti", "bnd"] },
+      ],
+    },
+  };
+  const twoAccountResult: RebalanceResult = {
+    ...result,
+    trades: [
+      { accountId: "ira", fundId: "bnd", action: "buy", amount: 100000, reason: "reason" },
+      { accountId: "taxable", fundId: "vti", action: "buy", amount: 50000, reason: "reason" },
+    ],
+    accounts: [
+      { accountId: "ira", contribution: 100000, currentTotal: 0, finalTotal: 100000, positions: [] },
+      { accountId: "taxable", contribution: 50000, currentTotal: 0, finalTotal: 50000, positions: [] },
+    ],
+  };
+  render(<ResultView scenario={twoAccounts} result={twoAccountResult} />);
+
+  for (const region of ["Trades", "Accounts"]) {
+    const headings = within(screen.getByRole("region", { name: region }))
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+    expect(headings[0]).toContain("Brokerage");
+    expect(headings[1]).toContain("Traditional IRA");
+  }
+});
+
 test("renders warnings as an alert when present, and no alert otherwise", () => {
   const { rerender } = render(<ResultView scenario={scenario} result={result} />);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
