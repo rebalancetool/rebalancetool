@@ -1,4 +1,5 @@
 import { allocateLp } from "./allocate.lp.ts";
+import { taxTypeRank } from "./allocate.ts";
 import type { TransportationProblem } from "./allocate.ts";
 import { DEFAULT_TOLERANCE_BPS, TOTAL_BPS } from "./types.ts";
 import type {
@@ -9,6 +10,7 @@ import type {
   RebalanceOptions,
   RebalanceResult,
   Target,
+  TaxPreference,
   Trade,
 } from "./types.ts";
 
@@ -25,7 +27,12 @@ import type {
  * raised by a sell never leaves its account), never selling a class below
  * its portfolio-level target, preferring sells in tax-advantaged accounts,
  * and never touching taxable positions unless sellInTaxableAccounts is also
- * set. Everything is governed by the tolerance band (toleranceBps, default
+ * set. With optimizeAssetLocation additionally set, asset-class
+ * taxPreference is promoted from a tie-break to an objective: the solver
+ * relocates a class between accounts (selling it where it is dispreferred,
+ * buying it back where preferred) even when the allocation is already on
+ * target — never at the allocation's expense, and still subject to both
+ * selling guards above. Everything is governed by the tolerance band (toleranceBps, default
  * 50): a class within ±band of its target weight is treated as on-target —
  * not bought toward, not sold down, not warned about — so trivial drift
  * never triggers trades. Contributions are always fully invested: cash may
@@ -67,6 +74,7 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
 
   const allowSelling = options.allowSelling ?? false;
   const sellInTaxableAccounts = options.sellInTaxableAccounts ?? false;
+  const optimizeAssetLocation = options.optimizeAssetLocation ?? false;
   const toleranceBps = options.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
   const minTradeCents = options.minTradeCents ?? 0;
 
@@ -142,11 +150,16 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     // ±toleranceBps of target weight, expressed in dollars of the new total.
     toleranceCents: Math.floor((newTotal * toleranceBps) / TOTAL_BPS),
     minTradeCents,
+    optimizeAssetLocation,
   };
 
   const allocation = allocateLp(problem);
 
   // --- translate allocation deltas (x[a][f] - H[a][f]) into trades ---
+
+  /** "tax-advantaged" / "taxable" — the account kind a non-neutral preference names. */
+  const preferredKind = (preference: TaxPreference): string =>
+    preference === "prefer_tax_advantaged" ? "tax-advantaged" : "taxable";
 
   /** "65% US Stocks, 35% International Stocks" — a blend's composition for trade reasons. */
   const describeBlend = (weights: Map<string, number>): string =>
@@ -196,37 +209,80 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
       const label = fund.ticker ?? fund.name;
       const soleClassId = weights.size === 1 ? weights.keys().next().value! : undefined;
       if (delta > 0) {
-        // "Below target" is only claimed when it's true: a buy whose fund
-        // offers no under-target exposure is surplus-cash placement (cash
-        // may not sit idle, so it lands per the documented tie-breaks).
+        // "Below target" is only claimed when it's true. A buy that fills no
+        // gap is surplus-cash placement (cash may not sit idle, so it lands
+        // per the documented tie-breaks) — unless the account received no
+        // cash at all, in which case it is sell-funded: the receiving side
+        // of a relocation (tax-preferred placement, a restricted-menu move,
+        // or buying back the untouched slice of a partly-sold blend).
         const fillsGap = soleClassId !== undefined ? belowTarget(soleClassId) : [...weights.keys()].some(belowTarget);
+        const hasCash = (accountCash.get(account.id) ?? 0) > 0;
         let reason: string;
         if (soleClassId !== undefined) {
-          const className = assetClassesById.get(soleClassId)!.name;
-          reason = fillsGap
-            ? `${className} is below target; buying ${formatDollars(delta)} of ${label} in ${account.name}.`
-            : `${className} is at or above target; investing ${formatDollars(delta)} of surplus contribution ` +
+          const assetClass = assetClassesById.get(soleClassId)!;
+          const className = assetClass.name;
+          const preference = assetClass.taxPreference ?? "neutral";
+          if (fillsGap) {
+            reason = `${className} is below target; buying ${formatDollars(delta)} of ${label} in ${account.name}.`;
+          } else if (hasCash) {
+            reason =
+              `${className} is at or above target; investing ${formatDollars(delta)} of surplus contribution ` +
               `cash in ${label} in ${account.name}.`;
+          } else if (
+            optimizeAssetLocation &&
+            preference !== "neutral" &&
+            taxTypeRank(preference, account.taxType) === 0
+          ) {
+            reason =
+              `${className} prefers ${preferredKind(preference)} accounts; buying ${formatDollars(delta)} of ` +
+              `${label} in ${account.name} to relocate it here.`;
+          } else {
+            reason =
+              `Buying ${formatDollars(delta)} of ${label} in ${account.name} to restore ${className} ` +
+              `sold from other positions.`;
+          }
+        } else if (fillsGap) {
+          reason =
+            `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+            `to close underweight asset classes.`;
+        } else if (hasCash) {
+          reason =
+            `Investing ${formatDollars(delta)} of surplus contribution cash in ${label} ` +
+            `(${describeBlend(weights)}) in ${account.name}; none of its classes is below target.`;
         } else {
-          reason = fillsGap
-            ? `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
-              `to close underweight asset classes.`
-            : `Investing ${formatDollars(delta)} of surplus contribution cash in ${label} ` +
-              `(${describeBlend(weights)}) in ${account.name}; none of its classes is below target.`;
+          reason =
+            `Buying ${formatDollars(delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
+            `to restore its asset classes sold from other positions.`;
         }
         trades.push({ accountId: account.id, fundId, action: "buy", amount: delta, reason });
       } else {
         // A single-class sell of a class that isn't above target can only be
         // a relocation: the class floor forbids shrinking its total, so the
-        // dollars are repurchased in another account.
+        // dollars are repurchased in another account. When location
+        // optimization is on and the class disprefers this account's tax
+        // type, that preference is the move's motive — say so.
         let reason: string;
         if (soleClassId !== undefined) {
-          const className = assetClassesById.get(soleClassId)!.name;
-          reason = aboveTarget(soleClassId)
-            ? `${className} is above target; selling ${formatDollars(-delta)} of ${label} in ${account.name} ` +
-              `to fund underweight asset classes.`
-            : `Selling ${formatDollars(-delta)} of ${label} in ${account.name} to relocate ${className} to ` +
-              `another account, freeing this one for underweight classes.`;
+          const assetClass = assetClassesById.get(soleClassId)!;
+          const className = assetClass.name;
+          const preference = assetClass.taxPreference ?? "neutral";
+          if (aboveTarget(soleClassId)) {
+            reason =
+              `${className} is above target; selling ${formatDollars(-delta)} of ${label} in ${account.name} ` +
+              `to fund underweight asset classes.`;
+          } else if (
+            optimizeAssetLocation &&
+            preference !== "neutral" &&
+            taxTypeRank(preference, account.taxType) !== 0
+          ) {
+            reason =
+              `${className} prefers ${preferredKind(preference)} accounts; selling ${formatDollars(-delta)} of ` +
+              `${label} in ${account.name} to relocate it.`;
+          } else {
+            reason =
+              `Selling ${formatDollars(-delta)} of ${label} in ${account.name} to relocate ${className} to ` +
+              `another account, freeing this one for ${optimizeAssetLocation ? "asset classes needed here" : "underweight classes"}.`;
+          }
         } else {
           reason =
             `Selling ${formatDollars(-delta)} of ${label} (${describeBlend(weights)}) in ${account.name} ` +
@@ -277,6 +333,117 @@ export function rebalance(portfolio: Portfolio, targets: Target[], options: Reba
     }
     // Otherwise: funded accounts offer it and the cash simply went to
     // bigger gaps — visible in the allocation, not warning-worthy.
+  }
+
+  // Asset-location feedback. Relocation needs selling, so everything here
+  // is gated on allowSelling; each warning states exact dollars the user
+  // can verify against the tables. The cases form a guidance chain — each
+  // step's warning names the next lever to pull:
+  //   1. mode off, relocation possible → suggest the option (naming
+  //      taxable selling too when the move needs it);
+  //   2. mode on, blocked only by the taxable-sell guard → name the guard;
+  //   3. mode on, but no preferred-type account offers a fund for the
+  //      class → the fund menus are the blocker, not the settings.
+  // Cases 1–2 are counterfactuals, not heuristics: the allocator is re-run
+  // with the mode forced on (and the taxable guard lifted), so they never
+  // fire when relocation is impossible for other reasons (no fund, no
+  // capacity, minTradeCents) and the dollars are exactly what the named
+  // settings unlock.
+  const nonNeutralClasses = portfolio.assetClasses.filter(
+    (assetClass) => (assetClass.taxPreference ?? "neutral") !== "neutral",
+  );
+  if (allowSelling && nonNeutralClasses.length > 0) {
+    /** Exact cent-basis-points of the class across the accounts passing the filter. */
+    const exposureCentBps = (
+      x: Map<string, Map<string, number>>,
+      classId: string,
+      accountFilter: (account: Account) => boolean,
+    ): number => {
+      let total = 0;
+      for (const account of portfolio.accounts) {
+        if (!accountFilter(account)) continue;
+        for (const [fundId, value] of x.get(account.id) ?? []) {
+          total += value * (weightsByFund.get(fundId)!.get(classId) ?? 0);
+        }
+      }
+      return total;
+    };
+    const inPreferred = (x: Map<string, Map<string, number>>, classId: string, pref: TaxPreference): number =>
+      exposureCentBps(x, classId, (account) => taxTypeRank(pref, account.taxType) === 0);
+    // Slack: separate runs round floats to cents independently, so up to a
+    // cent per position of repair noise can differ between them; anything
+    // within the tolerance band is as ignorable as band-scale drift.
+    const slackCents = problem.toleranceCents + portfolio.holdings.length + portfolio.accounts.length;
+
+    // Best reachable placement with the mode on and the taxable guard
+    // lifted. When both are already active this is the actual result, so
+    // no extra solve (and cases 1–2 correctly stay silent).
+    const fullPotential =
+      optimizeAssetLocation && sellInTaxableAccounts
+        ? allocation
+        : allocateLp({
+            ...problem,
+            optimizeAssetLocation: true,
+            sellable: (accountId, fundId) => heldFundValues.get(accountId)!.get(fundId) ?? 0,
+          });
+    // Same but keeping the current sell guards — tells case 1 whether
+    // flipping the mode alone would already plan the trades.
+    const guardedPotential = optimizeAssetLocation
+      ? allocation
+      : sellInTaxableAccounts
+        ? fullPotential
+        : allocateLp({ ...problem, optimizeAssetLocation: true });
+
+    const relocatable = nonNeutralClasses
+      .flatMap((assetClass) => {
+        const pref = assetClass.taxPreference!;
+        const actualCentBps = inPreferred(allocation.x, assetClass.id, pref);
+        const fullGain = Math.round((inPreferred(fullPotential.x, assetClass.id, pref) - actualCentBps) / TOTAL_BPS);
+        const guardedGain = Math.round(
+          (inPreferred(guardedPotential.x, assetClass.id, pref) - actualCentBps) / TOTAL_BPS,
+        );
+        return fullGain > slackCents ? [{ assetClass, pref, fullGain, guardedGain }] : [];
+      })
+      .sort((a, b) => b.fullGain - a.fullGain || a.assetClass.id.localeCompare(b.assetClass.id));
+    for (const { assetClass, pref, fullGain, guardedGain } of relocatable) {
+      const move = `${assetClass.name} could move ${formatDollars(fullGain)} into ${preferredKind(pref)} accounts`;
+      if (optimizeAssetLocation) {
+        warnings.push(`${move}, but selling in taxable accounts is disabled.`);
+      } else if (guardedGain >= fullGain - slackCents) {
+        warnings.push(`${move}; enabling asset-location optimization would plan the trades.`);
+      } else {
+        warnings.push(`${move}; enabling asset-location optimization and taxable selling would plan the trades.`);
+      }
+    }
+
+    // Case 3 — menus, not settings: the mode is on but the class has
+    // nowhere preferred to go, because no account of the preferred type
+    // offers a fund exposing it. (Whenever this holds, the counterfactual
+    // gain above is structurally zero, so the two warnings never overlap.)
+    if (optimizeAssetLocation) {
+      const stuck = nonNeutralClasses
+        .flatMap((assetClass) => {
+          const pref = assetClass.taxPreference!;
+          const offered = portfolio.accounts.some(
+            (account) =>
+              taxTypeRank(pref, account.taxType) === 0 && accountHasFundFor(account, assetClass.id, weightsByFund),
+          );
+          if (offered) return [];
+          const dispreferredCents = Math.round(
+            (exposureCentBps(allocation.x, assetClass.id, () => true) -
+              inPreferred(allocation.x, assetClass.id, pref)) /
+              TOTAL_BPS,
+          );
+          return dispreferredCents > slackCents ? [{ assetClass, pref, dispreferredCents }] : [];
+        })
+        .sort((a, b) => b.dispreferredCents - a.dispreferredCents || a.assetClass.id.localeCompare(b.assetClass.id));
+      for (const { assetClass, pref, dispreferredCents } of stuck) {
+        warnings.push(
+          `${assetClass.name} prefers ${preferredKind(pref)} accounts, but no ${preferredKind(pref)} account ` +
+            `offers a fund for it, so ${formatDollars(dispreferredCents)} cannot be relocated.`,
+        );
+      }
+    }
   }
 
   // --- per-account before/after breakdown ---

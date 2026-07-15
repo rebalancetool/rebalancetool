@@ -25,13 +25,17 @@ export function withContribution(scenario: Scenario, accountId: string, amount: 
 
 /**
  * Merge an options patch. Keeps the selling flags coherent the same way the
- * CLI does: selling in taxable accounts implies selling, and turning selling
- * off turns the taxable flag off with it.
+ * CLI does: selling in taxable accounts or optimizing asset location implies
+ * selling (both are meaningless without it), and turning selling off turns
+ * both dependent flags off with it.
  */
 export function withOptions(scenario: Scenario, patch: NonNullable<Scenario["options"]>): Scenario {
   const options = { ...scenario.options, ...patch };
-  if (patch.sellInTaxableAccounts) options.allowSelling = true;
-  if (patch.allowSelling === false) options.sellInTaxableAccounts = false;
+  if (patch.sellInTaxableAccounts || patch.optimizeAssetLocation) options.allowSelling = true;
+  if (patch.allowSelling === false) {
+    options.sellInTaxableAccounts = false;
+    options.optimizeAssetLocation = false;
+  }
   return { ...scenario, options };
 }
 

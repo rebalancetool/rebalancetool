@@ -74,6 +74,14 @@ export interface TransportationProblem {
   toleranceCents: number;
   /** Minimum size, in integer cents, of a single sell-funded move (0 = none). */
   minTradeCents: number;
+  /**
+   * When true, tax-preferred placement is promoted above the two
+   * sell-minimization objectives (see the stage list atop allocate.lp.ts):
+   * the allocator will trade *in order to* move a class into its preferred
+   * account type, instead of merely steering trades the earlier objectives
+   * already required. Deviation still outranks it. Default false.
+   */
+  optimizeAssetLocation?: boolean;
 }
 
 export type AllocationWarning = { kind: "unreachable_gap"; assetClassId: string; remainingGap: number };

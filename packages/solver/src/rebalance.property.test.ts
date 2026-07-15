@@ -53,20 +53,22 @@ function buildContributions(amounts: number[]): Contribution[] {
   return accountIds.map((accountId, i) => ({ accountId, amount: amounts[i]! }));
 }
 
-/** Random selling configuration, including buy-only. */
+/** Random selling configuration, including buy-only and location optimization. */
 const sellOptionsArb = fc.record({
   allowSelling: fc.boolean(),
   sellInTaxableAccounts: fc.boolean(),
+  optimizeAssetLocation: fc.boolean(),
 });
 
 describe("rebalance - properties (fast-check)", () => {
   it("never emits anything but a buy when selling is off", () => {
     fc.assert(
-      fc.property(rawWeightsArb, amountsArb, (rawWeights, amounts) => {
+      fc.property(rawWeightsArb, amountsArb, fc.boolean(), (rawWeights, amounts, optimizeAssetLocation) => {
         const portfolio: Portfolio = { ...fixture };
         const result = rebalance(portfolio, makeTargets(rawWeights), {
           contributions: buildContributions(amounts),
           allowSelling: false,
+          optimizeAssetLocation,
         });
         return result.trades.every((t) => t.action === "buy");
       }),
@@ -101,12 +103,13 @@ describe("rebalance - properties (fast-check)", () => {
   it("never sells in a taxable account unless sellInTaxableAccounts is set", () => {
     const taxableAccountIds = new Set(fixture.accounts.filter((a) => a.taxType === "taxable").map((a) => a.id));
     fc.assert(
-      fc.property(rawWeightsArb, amountsArb, (rawWeights, amounts) => {
+      fc.property(rawWeightsArb, amountsArb, fc.boolean(), (rawWeights, amounts, optimizeAssetLocation) => {
         const portfolio: Portfolio = { ...fixture };
         const result = rebalance(portfolio, makeTargets(rawWeights), {
           contributions: buildContributions(amounts),
           allowSelling: true,
           sellInTaxableAccounts: false,
+          optimizeAssetLocation,
         });
         return result.trades.every((t) => t.action === "buy" || !taxableAccountIds.has(t.accountId));
       }),
@@ -115,7 +118,7 @@ describe("rebalance - properties (fast-check)", () => {
 
   it("never sells an asset class below its target dollars", () => {
     fc.assert(
-      fc.property(rawWeightsArb, amountsArb, (rawWeights, amounts) => {
+      fc.property(rawWeightsArb, amountsArb, fc.boolean(), (rawWeights, amounts, optimizeAssetLocation) => {
         const portfolio: Portfolio = { ...fixture };
         const targets = makeTargets(rawWeights);
         const contributions = buildContributions(amounts);
@@ -123,6 +126,7 @@ describe("rebalance - properties (fast-check)", () => {
           contributions,
           allowSelling: true,
           sellInTaxableAccounts: true,
+          optimizeAssetLocation,
         });
 
         const newTotal =
@@ -176,7 +180,7 @@ describe("rebalance - properties (fast-check)", () => {
       fc.property(
         rawWeightsArb,
         amountsArb,
-        fc.record({ allowSelling: fc.boolean(), sellInTaxableAccounts: fc.boolean() }),
+        sellOptionsArb,
         (rawWeights, amounts, sellOptions) => {
           const targets = makeTargets(rawWeights);
           const contributions = buildContributions(amounts);

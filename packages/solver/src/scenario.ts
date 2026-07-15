@@ -144,13 +144,20 @@ function parseOptions(value: unknown): Omit<RebalanceOptions, "contributions"> {
       '"options.optimizer" was removed — the linear-program allocator is now the only engine. Delete the key.',
     );
   }
-  checkKnownKeys(record, ["allowSelling", "sellInTaxableAccounts", "toleranceBps", "minTradeCents"], "options");
+  checkKnownKeys(
+    record,
+    ["allowSelling", "sellInTaxableAccounts", "optimizeAssetLocation", "toleranceBps", "minTradeCents"],
+    "options",
+  );
   const options: Omit<RebalanceOptions, "contributions"> = {};
   if (record.allowSelling !== undefined) {
     options.allowSelling = requireBoolean(record.allowSelling, "options.allowSelling");
   }
   if (record.sellInTaxableAccounts !== undefined) {
     options.sellInTaxableAccounts = requireBoolean(record.sellInTaxableAccounts, "options.sellInTaxableAccounts");
+  }
+  if (record.optimizeAssetLocation !== undefined) {
+    options.optimizeAssetLocation = requireBoolean(record.optimizeAssetLocation, "options.optimizeAssetLocation");
   }
   if (record.toleranceBps !== undefined) {
     options.toleranceBps = requireNumber(record.toleranceBps, "options.toleranceBps");

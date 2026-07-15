@@ -131,13 +131,30 @@ The page is one screen, top to bottom:
 Selling is **on by default** in the UI (the solver itself stays buy-only
 by default) — but never in taxable accounts, where sells could realize
 capital gains, until the user opts in. All the knobs — allow selling,
-allow selling in taxable accounts, tolerance band, minimum sell-funded
-trade — live behind ⚙ Settings (one button in the header, one in the
-status bar). The status bar between the editor and the results carries
-the recompute pulse plus a settings summary that always states the
-selling posture ("selling on · taxable accounts protected" / "may sell
-in taxable accounts" / "selling off") and lists any other non-default
-knobs, so tucked-away settings can never invisibly shape the results.
+allow selling in taxable accounts, optimize asset location, tolerance
+band, minimum sell-funded trade — live behind ⚙ Settings (one button in
+the header, one in the status bar). "Optimize asset location"
+(`options.optimizeAssetLocation`, off by default) makes the solver
+relocate asset classes into the account types their tax preference
+names even when the allocation is already on target; like taxable
+selling it implies "allow selling", and turning selling off clears both
+dependent flags (`withOptions` keeps them coherent). It deliberately
+does *not* imply "allow selling in taxable accounts" — that's the one
+setting with capital-gains consequences, so it stays an explicit opt-in.
+Instead the solver's warnings form a guidance chain the UI just renders:
+with the mode off it says which classes could move and which settings
+would plan the trades; with the mode on but the taxable guard blocking,
+it names the guard; and when no preferred-type account offers a fund for
+a misplaced class (typical when menus only list what each account
+already holds), it points at the fund menus. The dollar amounts come
+from counterfactual re-solves, so they're exact and never fire when
+relocation is impossible anyway. The status bar
+between the editor and the results carries the recompute pulse plus a
+settings summary that always states the selling posture ("selling on ·
+taxable accounts protected" / "may sell in taxable accounts" / "selling
+off") and lists any other non-default knobs — including "optimizing
+asset location" — so tucked-away settings can never invisibly shape the
+results.
 
 A permanent footer carries the compliance disclaimer: the tool is a
 calculator performing arithmetic on user-supplied inputs, not

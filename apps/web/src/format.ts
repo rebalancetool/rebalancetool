@@ -46,6 +46,7 @@ export function describeOptions(options: Scenario["options"]): string {
   if (!(options?.allowSelling ?? false)) notes.push("selling off");
   else if (options?.sellInTaxableAccounts ?? false) notes.push("selling on", "may sell in taxable accounts");
   else notes.push("selling on", "taxable accounts protected");
+  if (options?.optimizeAssetLocation ?? false) notes.push("optimizing asset location");
   const tolerance = options?.toleranceBps ?? DEFAULT_TOLERANCE_BPS;
   if (tolerance !== DEFAULT_TOLERANCE_BPS) notes.push(`tolerance ±${formatBpsAsPercent(tolerance)}`);
   const minTrade = options?.minTradeCents ?? 0;

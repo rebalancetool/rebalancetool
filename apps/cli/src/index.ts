@@ -16,6 +16,10 @@ override what the file says:
       --sell                                  allow selling (options.allowSelling)
       --sell-taxable                          also allow sells in taxable accounts
                                               (implies --sell)
+      --optimize-location                     actively relocate asset classes to their
+                                              tax-preferred account types
+                                              (options.optimizeAssetLocation; needs --sell,
+                                              plus --sell-taxable to move out of taxable)
       --tolerance-bps <n>                     tolerance band in basis points
       --min-trade-cents <n>                   minimum sell-funded trade size
   -h, --help                                  show this help
@@ -170,6 +174,7 @@ function main(): void {
       contribution: { type: "string", short: "c", multiple: true },
       sell: { type: "boolean", default: false },
       "sell-taxable": { type: "boolean", default: false },
+      "optimize-location": { type: "boolean", default: false },
       "tolerance-bps": { type: "string" },
       "min-trade-cents": { type: "string" },
       help: { type: "boolean", short: "h", default: false },
@@ -199,6 +204,7 @@ function main(): void {
     options.allowSelling = true;
     options.sellInTaxableAccounts = true;
   }
+  if (values["optimize-location"]) options.optimizeAssetLocation = true;
   if (values["tolerance-bps"] !== undefined) {
     options.toleranceBps = parseIntFlag(values["tolerance-bps"], "--tolerance-bps");
   }

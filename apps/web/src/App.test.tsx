@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
+import type { Scenario } from "@rebalancer/solver";
 import { App } from "./App.tsx";
 import { demoScenario } from "./demo-scenario.ts";
 
@@ -399,4 +400,52 @@ test("taxable sells are off by default and flagged; enabling them in Settings fl
   // and the status bar flips to say sells there may happen.
   expect(screen.getByText(/may sell in taxable accounts/)).toBeInTheDocument();
   expect(within(taxableTradeCard()!).getAllByText("SELL").length).toBeGreaterThan(0);
+});
+
+test("optimize asset location relocates an on-target but misplaced portfolio from Settings", async () => {
+  const user = userEvent.setup();
+  // Allocation exactly on target, but the bonds sit in the taxable account
+  // and the stocks in the IRA — opposite to their tax preferences. Without
+  // the location setting the solver rightly does nothing.
+  const invertedLocation: Scenario = {
+    portfolio: {
+      assetClasses: [
+        { id: "us_stocks", name: "US Stocks", taxPreference: "prefer_taxable" },
+        { id: "us_bonds", name: "US Bonds", taxPreference: "prefer_tax_advantaged" },
+      ],
+      funds: [
+        { id: "vti", ticker: "VTI", name: "VTI", assetClasses: { us_stocks: 10000 } },
+        { id: "bnd", ticker: "BND", name: "BND", assetClasses: { us_bonds: 10000 } },
+      ],
+      accounts: [
+        { id: "taxable", name: "Brokerage", taxType: "taxable", availableFundIds: ["vti", "bnd"] },
+        { id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vti", "bnd"] },
+      ],
+      holdings: [
+        { accountId: "taxable", fundId: "bnd", value: 100000 },
+        { accountId: "ira", fundId: "vti", value: 100000 },
+      ],
+    },
+    targets: [
+      { assetClassId: "us_stocks", weight: 5000 },
+      { assetClassId: "us_bonds", weight: 5000 },
+    ],
+    contributions: [],
+    options: { allowSelling: true, sellInTaxableAccounts: true },
+  };
+  render(<App initialScenario={invertedLocation} />);
+
+  const trades = () => screen.getByRole("region", { name: "Trades" });
+  expect(within(trades()).getByText(/No trades needed/)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Rebalance settings" }));
+  await user.click(screen.getByLabelText("Optimize asset location"));
+
+  // The mirrored swap appears (each account sells its misplaced class and
+  // buys the other), and the status bar states the active mode.
+  expect(within(trades()).getAllByText("SELL")).toHaveLength(2);
+  expect(within(trades()).getAllByText("BUY")).toHaveLength(2);
+  // Both legs of the bond relocation cite the preference (sell and buy).
+  expect(within(trades()).getAllByText(/US Bonds prefers tax-advantaged accounts/)).toHaveLength(2);
+  expect(screen.getByText(/optimizing asset location/)).toBeInTheDocument();
 });

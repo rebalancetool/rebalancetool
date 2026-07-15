@@ -210,13 +210,19 @@ test("withOptions merges patches and keeps selling flags coherent", () => {
   const selling = withOptions(base, { allowSelling: true });
   expect(selling.options).toEqual({ allowSelling: true });
 
-  // Selling in taxable implies selling at all.
+  // Selling in taxable implies selling at all; so does location optimization.
   const taxable = withOptions(base, { sellInTaxableAccounts: true });
   expect(taxable.options).toMatchObject({ allowSelling: true, sellInTaxableAccounts: true });
+  const location = withOptions(base, { optimizeAssetLocation: true });
+  expect(location.options).toMatchObject({ allowSelling: true, optimizeAssetLocation: true });
 
-  // Turning selling off drags the taxable flag down with it.
-  const off = withOptions(taxable, { allowSelling: false });
-  expect(off.options).toMatchObject({ allowSelling: false, sellInTaxableAccounts: false });
+  // Turning selling off drags both dependent flags down with it.
+  const off = withOptions(withOptions(taxable, { optimizeAssetLocation: true }), { allowSelling: false });
+  expect(off.options).toMatchObject({
+    allowSelling: false,
+    sellInTaxableAccounts: false,
+    optimizeAssetLocation: false,
+  });
 
   // Unrelated options survive the merge.
   const tol = withOptions(taxable, { toleranceBps: 0 });

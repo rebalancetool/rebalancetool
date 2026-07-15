@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { formatBpsAsPercent, formatCents, formatDelta, formatSignedBpsAsPercent } from "./format.ts";
+import { describeOptions, formatBpsAsPercent, formatCents, formatDelta, formatSignedBpsAsPercent } from "./format.ts";
 
 test("formatCents renders integer cents as dollars", () => {
   expect(formatCents(0)).toBe("$0.00");
@@ -26,4 +26,13 @@ test("formatSignedBpsAsPercent", () => {
   expect(formatSignedBpsAsPercent(120)).toBe("+1.2%");
   expect(formatSignedBpsAsPercent(-55)).toBe("-0.6%");
   expect(formatSignedBpsAsPercent(0)).toBe("+0.0%");
+});
+
+test("describeOptions always states the selling posture and lists non-default knobs", () => {
+  expect(describeOptions(undefined)).toBe("selling off");
+  expect(describeOptions({ allowSelling: true })).toBe("selling on · taxable accounts protected");
+  expect(
+    describeOptions({ allowSelling: true, sellInTaxableAccounts: true, optimizeAssetLocation: true }),
+  ).toBe("selling on · may sell in taxable accounts · optimizing asset location");
+  expect(describeOptions({ toleranceBps: 0, minTradeCents: 500 })).toBe("selling off · tolerance ±0% · min trade $5.00");
 });

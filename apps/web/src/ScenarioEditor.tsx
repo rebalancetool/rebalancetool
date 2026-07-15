@@ -46,6 +46,21 @@ export function OptionsEditor({ scenario, onChange }: EditorProps) {
           </span>
         </span>
       </label>
+      <label className="check-row check-row-nested">
+        <input
+          type="checkbox"
+          aria-label="Optimize asset location"
+          checked={options.optimizeAssetLocation ?? false}
+          onChange={(event) => onChange(withOptions(scenario, { optimizeAssetLocation: event.target.checked }))}
+        />
+        <span>
+          Optimize asset location
+          <span className="editor-hint">
+            Relocate asset classes into the account types their tax preference names, even when the allocation is
+            already on target. Moving a class out of a taxable account also needs taxable selling.
+          </span>
+        </span>
+      </label>
       <div className="field-row">
         <span className="field-label">
           Tolerance band

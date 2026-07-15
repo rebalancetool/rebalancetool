@@ -121,6 +121,19 @@ export interface RebalanceOptions {
    */
   sellInTaxableAccounts?: boolean;
   /**
+   * Treat asset location as an objective, not just a tie-break. By default
+   * an asset class's taxPreference only steers trades that are already
+   * needed; a portfolio whose allocation is on target is never traded, no
+   * matter how badly its classes are located. With this set, the solver
+   * actively relocates classes toward their preferred account types —
+   * selling in a dispreferred account and buying the class back in a
+   * preferred one — while still never moving the allocation away from
+   * target. Only meaningful with allowSelling; relocating a class *out of*
+   * a taxable account additionally requires sellInTaxableAccounts, and such
+   * sells can realize capital gains. Default false.
+   */
+  optimizeAssetLocation?: boolean;
+  /**
    * Tolerance band in basis points (default DEFAULT_TOLERANCE_BPS = 50). An
    * asset class whose deviation from target is within the band is treated as
    * on-target: it neither attracts rebalancing trades nor triggers an
