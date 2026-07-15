@@ -471,6 +471,149 @@ describe("rebalance - selling guards", () => {
   });
 });
 
+describe("rebalance - asset location optimization", () => {
+  // A portfolio whose *allocation* is perfect but whose *location* is
+  // inverted: the bonds sit in the taxable brokerage and the stocks in the
+  // IRA, exactly opposite to the classes' tax preferences. Fixing it is a
+  // mirrored pair of exchanges (money never leaves an account): the
+  // brokerage swaps BND→VTI while the IRA swaps VTI→BND.
+  function invertedLocationHousehold(): { portfolio: Portfolio; targets: Target[] } {
+    const portfolio: Portfolio = {
+      assetClasses: [
+        { id: "us_stocks", name: "US Stocks", taxPreference: "prefer_taxable" },
+        { id: "us_bonds", name: "US Bonds", taxPreference: "prefer_tax_advantaged" },
+      ],
+      funds: [
+        { id: "vti", ticker: "VTI", name: "VTI", assetClasses: { us_stocks: 10000 } },
+        { id: "bnd", ticker: "BND", name: "BND", assetClasses: { us_bonds: 10000 } },
+      ],
+      accounts: [
+        { id: "taxable", name: "Brokerage", taxType: "taxable", availableFundIds: ["vti", "bnd"] },
+        { id: "ira", name: "IRA", taxType: "tax_deferred", availableFundIds: ["vti", "bnd"] },
+      ],
+      holdings: [
+        { accountId: "taxable", fundId: "bnd", value: 100000 },
+        { accountId: "ira", fundId: "vti", value: 100000 },
+      ],
+    };
+    const targets: Target[] = [
+      { assetClassId: "us_stocks", weight: 5000 },
+      { assetClassId: "us_bonds", weight: 5000 },
+    ];
+    return { portfolio, targets };
+  }
+
+  it("by default an on-target portfolio is never traded, however misplaced its classes are", () => {
+    const { portfolio, targets } = invertedLocationHousehold();
+    const result = rebalance(portfolio, targets, {
+      contributions: [],
+      allowSelling: true,
+      sellInTaxableAccounts: true,
+    });
+    expect(result.trades).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("swaps both classes into their preferred accounts, with reasons naming the preference", () => {
+    const { portfolio, targets } = invertedLocationHousehold();
+    const result = rebalance(portfolio, targets, {
+      contributions: [],
+      allowSelling: true,
+      sellInTaxableAccounts: true,
+      optimizeAssetLocation: true,
+    });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "ira", fundId: "vti", action: "sell", amount: 100000 },
+      { accountId: "ira", fundId: "bnd", action: "buy", amount: 100000 },
+      { accountId: "taxable", fundId: "bnd", action: "sell", amount: 100000 },
+      { accountId: "taxable", fundId: "vti", action: "buy", amount: 100000 },
+    ]);
+    // The allocation stays exactly on target — the swap moved location only.
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+    expect(result.warnings).toEqual([]);
+
+    // Reasons attribute every leg to the tax preference, not to phantom
+    // over/underweights or nonexistent contribution cash.
+    const bndSell = result.trades.find((t) => t.accountId === "taxable" && t.action === "sell")!;
+    expect(bndSell.reason).toBe(
+      "US Bonds prefers tax-advantaged accounts; selling $1,000.00 of BND in Brokerage to relocate it.",
+    );
+    const bndBuy = result.trades.find((t) => t.accountId === "ira" && t.action === "buy")!;
+    expect(bndBuy.reason).toBe(
+      "US Bonds prefers tax-advantaged accounts; buying $1,000.00 of BND in IRA to relocate it here.",
+    );
+    const vtiSell = result.trades.find((t) => t.accountId === "ira" && t.action === "sell")!;
+    expect(vtiSell.reason).toBe("US Stocks prefers taxable accounts; selling $1,000.00 of VTI in IRA to relocate it.");
+    const vtiBuy = result.trades.find((t) => t.accountId === "taxable" && t.action === "buy")!;
+    expect(vtiBuy.reason).toBe(
+      "US Stocks prefers taxable accounts; buying $1,000.00 of VTI in Brokerage to relocate it here.",
+    );
+  });
+
+  it("stays put when the taxable side of the swap is not sellable", () => {
+    // Relocating the bonds out of the brokerage requires selling there;
+    // without sellInTaxableAccounts the class floors pin everything, and
+    // the mode must not half-do the swap (e.g. churn the IRA pointlessly).
+    const { portfolio, targets } = invertedLocationHousehold();
+    const result = rebalance(portfolio, targets, {
+      contributions: [],
+      allowSelling: true,
+      optimizeAssetLocation: true,
+    });
+    expect(result.trades).toEqual([]);
+  });
+
+  it("is inert without allowSelling", () => {
+    const { portfolio, targets } = invertedLocationHousehold();
+    const result = rebalance(portfolio, targets, { contributions: [], optimizeAssetLocation: true });
+    expect(result.trades).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("minTradeCents suppresses relocations below the floor", () => {
+    const { portfolio, targets } = invertedLocationHousehold();
+    const options = {
+      contributions: [],
+      allowSelling: true,
+      sellInTaxableAccounts: true,
+      optimizeAssetLocation: true,
+    };
+    expect(rebalance(portfolio, targets, { ...options, minTradeCents: 200000 }).trades).toEqual([]);
+    expect(rebalance(portfolio, targets, { ...options, minTradeCents: 50000 }).trades).toHaveLength(4);
+  });
+
+  it("uses new cash plus tax-advantaged sells to improve location without touching taxable positions", () => {
+    // Same inverted household, but a $1,000 contribution lands in the
+    // brokerage. The cash buys stocks in the brokerage (their preferred
+    // home), which lets the IRA rotate half its stocks into bonds — the
+    // best location reachable without any taxable sell.
+    const { portfolio, targets } = invertedLocationHousehold();
+    const result = rebalance(portfolio, targets, {
+      contributions: [{ accountId: "taxable", amount: 100000 }],
+      allowSelling: true,
+      optimizeAssetLocation: true,
+    });
+
+    expect(
+      result.trades.map(({ accountId, fundId, action, amount }) => ({ accountId, fundId, action, amount })),
+    ).toEqual([
+      { accountId: "ira", fundId: "vti", action: "sell", amount: 50000 },
+      { accountId: "ira", fundId: "bnd", action: "buy", amount: 50000 },
+      { accountId: "taxable", fundId: "vti", action: "buy", amount: 100000 },
+    ]);
+    for (const deviation of result.deviationFromTarget) {
+      expect(deviation.deviationBps).toBe(0);
+    }
+    const vtiSell = result.trades.find((t) => t.action === "sell")!;
+    expect(vtiSell.reason).toBe("US Stocks prefers taxable accounts; selling $500.00 of VTI in IRA to relocate it.");
+  });
+});
+
 describe("rebalance - tolerance band and minTradeCents", () => {
   /** One IRA at 50/50 target, holdings drifted to the given stock/bond split. */
   function driftedPortfolio(stockValue: number, bondValue: number): { portfolio: Portfolio; targets: Target[] } {

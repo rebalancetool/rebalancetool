@@ -43,6 +43,16 @@ describe("validateScenario", () => {
     expect(validateScenario(doc).contributions).toEqual([]);
   });
 
+  it("accepts optimizeAssetLocation in options", () => {
+    const doc = minimalScenario();
+    (doc.options as Record<string, unknown>).optimizeAssetLocation = true;
+    expect(validateScenario(doc).options).toEqual({
+      allowSelling: true,
+      toleranceBps: 0,
+      optimizeAssetLocation: true,
+    });
+  });
+
   it("rejects the removed options.optimizer with a hint", () => {
     const doc = minimalScenario();
     (doc.options as Record<string, unknown>).optimizer = "greedy";

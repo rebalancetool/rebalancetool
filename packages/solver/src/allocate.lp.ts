@@ -30,6 +30,17 @@ import { TOTAL_BPS } from "./types.ts";
  *      already pinned minimal, this stage can only pick *which* fund, never
  *      add churn).
  *
+ * With optimizeAssetLocation (opt-in), stage 4 is promoted above stages 2–3:
+ * tax-preferred placement becomes something the solver will *trade for* —
+ * selling a class in a dispreferred account and buying it back in a
+ * preferred one — instead of only a tie-break among trades the earlier
+ * objectives already required. Deviation still outranks it, so location is
+ * never improved at the allocation's expense, and sells are still minimized
+ * among the placements that achieve the best reachable location. The
+ * caller's sell caps apply unchanged, which is what keeps the mode inert
+ * without allowSelling (and keeps taxable positions parked without
+ * sellInTaxableAccounts).
+ *
  * Because stage 4 outranks stage 5, *surplus* contribution cash (cash whose
  * account offers no fund for any remaining gap) is parked in a tax-preferred
  * class when the account has one, and menu order only picks the fund within
@@ -372,13 +383,22 @@ function solveLexicographic(
   }
 
   // Lexicographic solve: optimize each stage, then pin it before the next.
-  const stages: Array<{ objective: string; direction: "minimize" | "maximize"; active: boolean }> = [
-    { objective: "dev", direction: "minimize", active: true },
+  // Stage order is a policy decision (see the header comment): by default
+  // sells are minimized before tax-preferred placement, so preference only
+  // steers trades already required; with optimizeAssetLocation the
+  // preference stage outranks both sell stages, so the solver may sell
+  // purely to relocate a class into its preferred account type.
+  type Stage = { objective: string; direction: "minimize" | "maximize"; active: boolean };
+  const devStage: Stage = { objective: "dev", direction: "minimize", active: true };
+  const sellStages: Stage[] = [
     { objective: "sells", direction: "minimize", active: hasSells },
     { objective: "taxsells", direction: "minimize", active: hasSells },
-    { objective: "pref", direction: "maximize", active: hasPreferences },
-    { objective: "fundpref", direction: "minimize", active: hasFundPreferences },
   ];
+  const prefStage: Stage = { objective: "pref", direction: "maximize", active: hasPreferences };
+  const fundPrefStage: Stage = { objective: "fundpref", direction: "minimize", active: hasFundPreferences };
+  const stages: Stage[] = problem.optimizeAssetLocation
+    ? [devStage, prefStage, ...sellStages, fundPrefStage]
+    : [devStage, ...sellStages, prefStage, fundPrefStage];
 
   let finalValues = new Map<string, number>();
   for (const stage of stages) {
