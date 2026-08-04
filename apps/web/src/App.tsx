@@ -172,7 +172,10 @@ export function App({ initialScenario }: { initialScenario?: Scenario } = {}) {
         <header className="app-header">
           <div>
             <h1>
-              <img className="wordmark" src="/wordmark.svg" alt="rebalancetool" height={48} />
+              <img className="wordmark" src="/wordmark.svg" alt="" height={48} />
+              <span className="visually-hidden">
+                rebalancetool: multi-account rebalance calculator
+              </span>
             </h1>
             <div className="tagline">
               <p className="how-title">How it works:</p>
