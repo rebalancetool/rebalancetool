@@ -8,7 +8,7 @@ import { STORAGE_KEY } from "./scenario-storage.ts";
 
 test("renders a populated scenario's solved result", () => {
   render(<App initialScenario={demoScenario} />);
-  expect(screen.getByRole("heading", { name: "rebalancetool" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "rebalancetool: multi-account rebalance calculator" })).toBeInTheDocument();
   const trades = screen.getByRole("region", { name: "Trades" });
   expect(within(trades).getAllByText("BUY").length).toBeGreaterThan(0);
   expect(screen.getByRole("region", { name: "Portfolio by asset class" })).toBeInTheDocument();
@@ -398,7 +398,7 @@ test("the settings popover light-dismisses on an outside click, but not an insid
   await user.click(screen.getByRole("button", { name: "Rebalance settings" }));
   expect(screen.getByLabelText("Allow selling")).toBeInTheDocument();
 
-  await user.click(screen.getByRole("heading", { name: "rebalancetool" }));
+  await user.click(screen.getByRole("heading", { name: "rebalancetool: multi-account rebalance calculator" }));
   expect(screen.queryByLabelText("Allow selling")).not.toBeInTheDocument();
 
   // Interacting with a control inside the popover must not close it.
