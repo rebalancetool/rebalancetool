@@ -4,19 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+Node/pnpm do **not** run on the host — everything runs in a container via `compose.yaml` (requires OrbStack, or another Docker runtime, installed and running; see README "Prerequisites" for setup and the isolation model). The repo is mounted read-only; `node_modules`/`dist` are named volumes; each container start runs `pnpm install --frozen-lockfile` first.
+
 ```
-pnpm install                    # install deps (use over adding deps by hand)
-pnpm dev                        # web UI dev server (http://localhost:5173)
-pnpm run typecheck              # tsc --noEmit in every package
-pnpm run test                   # vitest run in every package (single run)
-pnpm --filter @rebalancer/solver test -- rebalance   # run a single test file/pattern
-pnpm run test:watch             # vitest in watch mode, solver package only
-pnpm run build                  # compile every package to dist/
-pnpm icons                      # regenerate raster icons in apps/web/public from their SVGs (sharp)
-pnpm solve -p <scenario.json> [--sell] [--sell-taxable] [-c accountId:amountCents ...]   # run the CLI
+docker compose build                                  # build the dev image (after changing docker/ or the pnpm pin)
+docker compose up web                                 # web UI dev server (http://localhost:5180; WEB_PORT=5181 to remap)
+docker compose run --rm pnpm run typecheck            # tsc --noEmit in every package
+docker compose run --rm pnpm run test                 # vitest run in every package (single run)
+docker compose run --rm pnpm --filter @rebalancer/solver test -- rebalance   # run a single test file/pattern
+docker compose run --rm pnpm run test:watch           # vitest in watch mode, solver package only
+docker compose run --rm pnpm run build                # compile every package to dist/ (in a volume)
+docker compose run --rm pnpm solve -p <scenario.json> [--sell] [--sell-taxable] [-c accountId:amountCents ...]   # run the CLI
+docker compose run --rm pnpm-rw icons                 # writable mount (.git masked): regenerate raster icons in apps/web/public
+docker compose run --rm pnpm-rw --filter <pkg> add <dep>   # writable mount: change package.json / pnpm-lock.yaml
 ```
 
-Node version is pinned in `.nvmrc` (24); run `fnm use` before working. CI (`.github/workflows/ci.yml`) runs `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run test` on every push.
+Never run `pnpm`/`npm`/`node` directly on the host, and only use `pnpm-rw` for commands that must write tracked files. Node version is pinned in `.nvmrc` (24) and the image's base tag must match it. CI (`.github/workflows/ci.yml`) runs `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run test` on every push (natively on the runner, not via compose).
 
 ## Architecture
 

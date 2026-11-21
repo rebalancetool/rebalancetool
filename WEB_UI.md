@@ -12,11 +12,11 @@ saved copy.
 ## Run it locally
 
 ```
-pnpm install     # once, at the repo root (Node 24 — run `fnm use` first)
-pnpm dev         # start the Vite dev server
+docker compose build     # once, at the repo root (see README "Prerequisites")
+docker compose up web    # start the Vite dev server in an isolated container
 ```
 
-Then open **http://localhost:5173**. A first visit starts with a small
+Then open **http://localhost:5180**. A first visit starts with a small
 catalog of common index funds and their asset classes
 (`starter-scenario.ts`) — an editable convenience, deliberately with
 **no accounts, holdings, or target percentages**: pre-filling those

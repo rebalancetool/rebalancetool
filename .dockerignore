@@ -1,0 +1,4 @@
+# The image only needs docker/entrypoint.sh; keep everything else (including
+# host-installed node_modules and any secrets) out of the build context.
+*
+!docker/entrypoint.sh

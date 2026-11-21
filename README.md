@@ -244,36 +244,96 @@ apps/web/            React (Vite) UI over the solver — no backend, state lives
 
 ## Prerequisites
 
-- **Node.js 24** (see `.nvmrc`). With [fnm](https://github.com/Schniz/fnm),
-  `fnm use` in this directory picks it up automatically.
-- **pnpm 11** via [Corepack](https://nodejs.org/api/corepack.html): run
-  `corepack enable` once and `pnpm` resolves to the exact version pinned in
-  `package.json`'s `packageManager` field. Corepack shims are per Node
-  install — if you switch Node versions, run `corepack enable` again.
-- Everything else (TypeScript, vitest, fast-check, tsx) arrives with
-  `pnpm install`. Note the repo pins **TypeScript 7.x**, not the more
-  common 5.x — intentional, not a typo.
+The supported way to work on this repo runs **everything in a container**:
+Node, pnpm, and every npm dependency (including their install scripts) live
+only inside it, never on your machine. No Node, pnpm, or Corepack on the
+host — the one thing you must install is a container runtime that provides
+the `docker` and `docker compose` commands:
+
+- **macOS:** [OrbStack](https://orbstack.dev) (recommended) — download it
+  from the site or `brew install orbstack`, then open the OrbStack app once
+  so it can finish setup and put `docker` on your PATH. OrbStack must be
+  running whenever you use the commands below (it starts quickly and can be
+  set to launch at login). Docker Desktop also works.
+- **Linux:** Docker Engine with the Compose plugin.
+
+Check it's ready with `docker compose version`.
+
+The image (`docker/Dockerfile`) is Node 24 (matching `.nvmrc`) with the pnpm
+version pinned in `package.json`'s `packageManager` field baked in via
+Corepack. Note the repo pins **TypeScript 7.x**, not the more common 5.x —
+intentional, not a typo.
+
+### Isolation model
+
+`compose.yaml` is set up so that code pulled from npm can't reach back out
+to your Mac:
+
+- The repo is bind-mounted **read-only** at `/app`. Dependency code —
+  install scripts, Vite plugins, the test runner — can read your source but
+  can't modify it, or plant anything (e.g. in `.git/hooks`) that would later
+  run on the host.
+- `node_modules` and `dist/` live in named Docker volumes: Linux-native and
+  never mixed with a host `node_modules`. (If you previously ran
+  `pnpm install` on the host, the leftover `node_modules/` directories are
+  ignored by the container and safe to delete.)
+- Runs as the unprivileged `node` user with all Linux capabilities dropped,
+  no privilege escalation, and a read-only root filesystem.
+- The dev server is published on `127.0.0.1` only, not your LAN.
+- The container does have outbound network access (the install step needs
+  the npm registry), so this protects your machine and source tree, not
+  against a dependency phoning home with what it can read in the repo.
 
 ## Setup
 
 ```
-pnpm install
+docker compose build
 ```
+
+That's it. Every container start runs
+`pnpm install --frozen-lockfile` against `pnpm-lock.yaml` first (a ~1s
+no-op when the volumes are current), so dependencies stay in sync with the
+lockfile automatically. Rebuild the image after changing `docker/` or the
+pinned pnpm version.
 
 ## Commands
 
 ```
-pnpm dev             # start the web UI dev server (http://localhost:5173)
-pnpm run typecheck   # type-check every package, no emit
-pnpm run test        # run all tests once (vitest + fast-check property tests)
-pnpm run test:watch  # run the solver's tests in watch mode
-pnpm run build       # compile every package to dist/
+docker compose up web                        # web UI dev server → http://localhost:5180 (Ctrl-C to stop)
+docker compose run --rm pnpm run typecheck   # type-check every package, no emit
+docker compose run --rm pnpm run test        # run all tests once (vitest + fast-check property tests)
+docker compose run --rm pnpm run test:watch  # run the solver's tests in watch mode
+docker compose run --rm pnpm run build       # compile every package to dist/ (kept in a volume)
 ```
+
+`docker compose run --rm pnpm <args>` runs any pnpm command in the
+read-only sandbox; the rest of this README writes plain `pnpm …` for
+brevity. Edits on the host hot-reload in the dev server. The port is 5180
+(not Vite's usual 5173, to stay clear of other projects' dev servers); if
+it's taken, pick another: `WEB_PORT=5181 docker compose up web`.
+
+**Commands that change tracked files** — adding or upgrading a dependency
+(rewrites `package.json` / `pnpm-lock.yaml`), or `pnpm icons` (rewrites
+`apps/web/public/`) — need the one writable variant, `pnpm-rw`. It mounts
+the repo read-write but masks `.git`, so review the resulting diff before
+committing:
+
+```
+docker compose run --rm pnpm-rw --filter @rebalancer/web add some-package
+docker compose run --rm pnpm-rw icons
+```
+
+(If you hand-edited a `package.json` so the lockfile is out of date, add
+`-e SKIP_INSTALL=1` to skip the frozen install and then run
+`pnpm-rw install`.)
+
+To reset dependencies from scratch: `docker compose down -v` (deletes the
+`node_modules`, `dist`, and pnpm-store volumes).
 
 ## CLI
 
 ```
-pnpm solve -p <scenario.json> [overrides]
+docker compose run --rm pnpm solve -p <scenario.json> [overrides]
 ```
 
 The scenario file is the complete input (portfolio + targets + contributions
@@ -288,17 +348,19 @@ override the file:
     --min-trade-cents <n>                   minimum sell-funded trade size
 ```
 
-Try it against the placeholder fixtures:
+Try it against the placeholder fixtures (scenario paths are relative to
+the repo root, and must be inside the repo, since that's all the container
+can see):
 
 ```
 # buy-only: invest the fixture's contributions
-pnpm solve -p packages/solver/fixtures/example.json
+docker compose run --rm pnpm solve -p packages/solver/fixtures/example.json
 
 # override the contributions from the command line
-pnpm solve -p packages/solver/fixtures/example.json -c taxable:40000 -c k401:15000 -c hsa:5000
+docker compose run --rm pnpm solve -p packages/solver/fixtures/example.json -c taxable:40000 -c k401:15000 -c hsa:5000
 
 # a drifted portfolio that can only reach target by selling
-pnpm solve -p packages/solver/fixtures/sell-required.json
+docker compose run --rm pnpm solve -p packages/solver/fixtures/sell-required.json
 ```
 
 The output lists trades grouped by account (sells before buys, each with

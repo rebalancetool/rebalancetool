@@ -1,0 +1,86 @@
+# Containerized dev environment (OrbStack / Docker). Node and pnpm run only
+# inside the container; nothing from npm is installed or executed on the host.
+#
+#   docker compose up web                     # dev server → http://localhost:5180
+#   docker compose run --rm pnpm run test     # any pnpm command
+#
+# Isolation model:
+#   - The repo is bind-mounted READ-ONLY, so dependency code (install
+#     scripts, vite plugins, tests) can't modify your source or plant
+#     anything in .git/hooks that would later run on the Mac.
+#   - node_modules and dist/ are named volumes — writable, Linux-native,
+#     never mixed with any host node_modules.
+#   - Unprivileged user, all capabilities dropped, no privilege escalation,
+#     read-only root filesystem, port published on 127.0.0.1 only.
+#   - `pnpm-rw` is the one writable escape hatch, for commands that must
+#     change tracked files (pnpm add/update, pnpm icons); .git stays masked.
+
+x-base: &base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: rebalancer-dev
+  init: true
+  user: node
+  working_dir: /app
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp
+    - /home/node:uid=1000,gid=1000
+  environment:
+    HOME: /home/node
+  volumes: &volumes
+    - .:/app:ro
+    - node_modules_root:/app/node_modules
+    - node_modules_web:/app/apps/web/node_modules
+    - node_modules_cli:/app/apps/cli/node_modules
+    - node_modules_solver:/app/packages/solver/node_modules
+    - dist_web:/app/apps/web/dist
+    - dist_cli:/app/apps/cli/dist
+    - dist_solver:/app/packages/solver/dist
+    - pnpm_store:/pnpm-store
+
+services:
+  web:
+    <<: *base
+    command:
+      ["pnpm", "--filter", "@rebalancer/web", "exec",
+       "vite", "--host", "0.0.0.0", "--port", "${WEB_PORT:-5180}", "--strictPort"]
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5180}:${WEB_PORT:-5180}"
+
+  pnpm:
+    <<: *base
+    entrypoint: ["rebalancer-entrypoint", "pnpm"]
+    command: ["run", "test"]
+    profiles: [tools]
+
+  pnpm-rw:
+    <<: *base
+    entrypoint: ["rebalancer-entrypoint", "pnpm"]
+    command: ["--version"]
+    profiles: [tools]
+    volumes:
+      - .:/app
+      - type: tmpfs
+        target: /app/.git
+      - node_modules_root:/app/node_modules
+      - node_modules_web:/app/apps/web/node_modules
+      - node_modules_cli:/app/apps/cli/node_modules
+      - node_modules_solver:/app/packages/solver/node_modules
+      - dist_web:/app/apps/web/dist
+      - dist_cli:/app/apps/cli/dist
+      - dist_solver:/app/packages/solver/dist
+      - pnpm_store:/pnpm-store
+
+volumes:
+  node_modules_root:
+  node_modules_web:
+  node_modules_cli:
+  node_modules_solver:
+  dist_web:
+  dist_cli:
+  dist_solver:
+  pnpm_store:
