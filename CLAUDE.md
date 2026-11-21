@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Node/pnpm do **not** run on the host — everything runs in a container via `compose.yaml` (requires OrbStack, or another Docker runtime, installed and running; see README "Prerequisites" for setup and the isolation model). The repo is mounted read-only; `node_modules`/`dist` are named volumes; each container start runs `pnpm install --frozen-lockfile` first.
 
 ```
+mkdir -p node_modules apps/web/node_modules apps/cli/node_modules packages/solver/node_modules apps/web/dist apps/cli/dist packages/solver/dist   # once per clone: empty mount points (the read-only repo mount can't create them)
 docker compose build                                  # build the dev image (after changing docker/ or the pnpm pin)
 docker compose up web                                 # web UI dev server (http://localhost:5180; WEB_PORT=5181 to remap)
 docker compose run --rm pnpm run typecheck            # tsc --noEmit in every package

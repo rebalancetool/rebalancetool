@@ -274,9 +274,10 @@ to your Mac:
   can't modify it, or plant anything (e.g. in `.git/hooks`) that would later
   run on the host.
 - `node_modules` and `dist/` live in named Docker volumes: Linux-native and
-  never mixed with a host `node_modules`. (If you previously ran
-  `pnpm install` on the host, the leftover `node_modules/` directories are
-  ignored by the container and safe to delete.)
+  never mixed with a host `node_modules`. The matching folders on the host
+  are just empty mount points (see Setup). If you previously ran
+  `pnpm install` on the host, empty those folders, but don't delete them:
+  the container needs them to exist.
 - Runs as the unprivileged `node` user with all Linux capabilities dropped,
   no privilege escalation, and a read-only root filesystem.
 - The dev server is published on `127.0.0.1` only, not your LAN.
@@ -287,10 +288,19 @@ to your Mac:
 ## Setup
 
 ```
+mkdir -p node_modules apps/web/node_modules \
+         apps/cli/node_modules packages/solver/node_modules \
+         apps/web/dist apps/cli/dist packages/solver/dist
 docker compose build
 ```
 
-That's it. Every container start runs
+The `mkdir` creates empty, git-ignored folders for Docker to mount the
+`node_modules` and `dist` volumes onto. Docker can't create them itself
+because the repo is mounted read-only, so on a fresh clone without them
+every container fails to start with "create mountpoint ... Read-only file
+system". They stay empty on the host.
+
+Every container start runs
 `pnpm install --frozen-lockfile` against `pnpm-lock.yaml` first (a ~1s
 no-op when the volumes are current), so dependencies stay in sync with the
 lockfile automatically. Rebuild the image after changing `docker/` or the
